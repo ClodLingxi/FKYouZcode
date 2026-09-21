@@ -40,6 +40,7 @@ import {
 } from "./constants.js";
 import type { CodingPlanStatusPanelViewState } from "./codingPlanStatusPanelViewState.js";
 import { CodingPlanStatusMeta, StartPlanStatusMeta } from "./CodingPlanStatusMeta.js";
+import { BillingDiscountBadge } from "./BillingDiscountBadge.js";
 import { CodingPlanStatusActions, CodingPlanUpgradeAction } from "./CodingPlanStatusActions.js";
 import type { CodingPlanLoginOptions } from "./codingPlanPricingCards.js";
 import type { PurchaseAudience } from "./codingPlanEnterpriseTiers.js";
@@ -460,6 +461,7 @@ export function CodingPlanStatusPanel({
       <CodingPlanStatusMeta
         renewTime={subscriptionRenewTime}
         expireTime={subscriptionExpireTime}
+        extraAction={<BillingDiscountBadge />}
         manageLabel={
           canManageCodingPlan
             ? intl.formatMessage({

@@ -3,6 +3,7 @@ import type {
   ApiClient,
   ApiRequestInit,
   ForceUpdateConfig,
+  CodingPlanBillingDiscountConfig,
   CodingPlanAgreementResponse,
   CodingPlanBatchPreviewRequest,
   CodingPlanBatchPreviewResponse,
@@ -117,6 +118,8 @@ interface ZCodeClientConfigEnvelope {
       dynamicWorkflow?: {
         mode?: unknown;
       } | null;
+      // 150% 配额活动文案：按 locale 下发的多语言展示配置，活动本身的折扣在服务端计费侧生效。
+      codingPlanBillingDiscount?: CodingPlanBillingDiscountConfig | null;
     } | null;
   } | null;
 }
@@ -276,6 +279,21 @@ export class BigModelCodingPlanSubscriptionProvider {
   async getForceUpdateConfig(): Promise<ForceUpdateConfig | null> {
     const payload = await this.getClientConfigs();
     return unwrapClientConfigForceUpdate(payload);
+  }
+
+  async getBillingDiscount(): Promise<CodingPlanBillingDiscountConfig | null> {
+    // 与官方 3.14.1 语义一致：configs 含 codingPlanBillingDiscount 键即返回原文案对象，
+    // 否则视为无活动；读取失败不抛给调用方（展示层按无活动处理）。
+    try {
+      const payload = await this.getClientConfigs();
+      const configs = payload.data?.configs;
+      if (!configs || !("codingPlanBillingDiscount" in configs)) return null;
+      const raw = configs.codingPlanBillingDiscount;
+      if (!raw || typeof raw !== "object") return null;
+      return raw;
+    } catch {
+      return null;
+    }
   }
 
   async preview(request: CodingPlanPreviewRequest): Promise<CodingPlanPreviewResponse> {

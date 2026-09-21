@@ -118,6 +118,18 @@ export interface ForceUpdateConfig {
   minimalVersion: string;
 }
 
+/** 150% 配额活动单语言文案：字段按官方渲染语义命名，空串视为缺省不展示。 */
+export interface CodingPlanBillingDiscountCopy {
+  badgeBody?: string;
+  cardTitle?: string;
+  cardBody?: string;
+  infoTitle?: string;
+  infoBody?: string;
+}
+
+/** client/configs 下发的活动文案配置：locale → 文案。活动折扣本身在服务端计费侧生效。 */
+export type CodingPlanBillingDiscountConfig = Record<string, CodingPlanBillingDiscountCopy>;
+
 /**
  * 闲时任务客户端配置：client/configs 只下发入口曝光开关；模型展示来自 Built-in
  * offpeak Provider。准入/低峰判断仍以服务端为准（3006 兜底）。

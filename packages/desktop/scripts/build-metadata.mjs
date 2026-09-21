@@ -67,6 +67,12 @@ function resolveInstalledPackageVersion(packageName, fallbackVersion) {
 }
 
 function resolveCommitId() {
+  // 环境变量优先：自建产物可对齐官方构建标识，避免服务端渠道（反馈 build_commit_id 等）
+  // 区分官方与自建客户端。
+  const override = process.env.ZCODE_COMMIT?.trim();
+  if (override) {
+    return override;
+  }
   try {
     return execSync("git rev-parse --short=8 HEAD", {
       cwd: workspaceDir,
@@ -79,6 +85,14 @@ function resolveCommitId() {
   }
 }
 
+function resolveBuildTime() {
+  const override = process.env.ZCODE_BUILD_TIME?.trim();
+  if (override) {
+    return override;
+  }
+  return new Date().toISOString();
+}
+
 export function collectBuildMetadata() {
   const rootPackageJson = readJson(resolve(workspaceDir, "package.json"));
   const desktopPackageJson = readJson(resolve(desktopDir, "package.json"));
@@ -86,7 +100,7 @@ export function collectBuildMetadata() {
   return {
     appVersion: normalizeVersion(rootPackageJson.version),
     buildCommitId: resolveCommitId(),
-    buildTime: new Date().toISOString(),
+    buildTime: resolveBuildTime(),
     electronBuilderVersion: resolveInstalledPackageVersion(
       "electron-builder",
       desktopPackageJson.devDependencies?.["electron-builder"],

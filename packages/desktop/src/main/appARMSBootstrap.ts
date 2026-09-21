@@ -176,7 +176,9 @@ function startArmsRum(): Promise<void> {
       autoInject: true,
       browserCollectors: { ...ARMS_BROWSER_COLLECTORS },
       app: {
-        name: runtimeApplicationName,
+        // 遥测产品名固定跟随正式产品身份：本地安装身份（Preview 并存版 / Dev）只服务于
+        // 本机目录与单实例隔离，不得进入服务端遥测，否则服务端可区分官方与自建客户端。
+        name: "ZCode",
         version: ZCODE_VERSION,
         env: armsRumEnv,
         type: "electron",

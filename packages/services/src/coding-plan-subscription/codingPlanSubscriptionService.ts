@@ -48,6 +48,7 @@ export function createCodingPlanSubscriptionService(
       bigmodelProvider.getDynamicWorkflowClientConfig(options),
     getModelContextBudgetStrategy: () => bigmodelProvider.getModelContextBudgetStrategy(),
     getForceUpdateConfig: () => bigmodelProvider.getForceUpdateConfig(),
+    getBillingDiscount: () => bigmodelProvider.getBillingDiscount(),
     productInfo: (request) => bigmodelProvider.productInfo(request),
     preview: (request) => bigmodelProvider.preview(request),
     createSign: (request) => bigmodelProvider.createSign(request),
