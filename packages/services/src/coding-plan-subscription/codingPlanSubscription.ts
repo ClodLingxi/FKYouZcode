@@ -44,6 +44,9 @@ import type {
   ForceUpdateConfig,
   DynamicWorkflowClientConfig,
   CodingPlanBillingDiscountConfig,
+  CodingPlanManualClaimRequest,
+  CodingPlanManualClaimResponse,
+  CodingPlanManualClaimPreviewsResponse,
 } from "@zcode/shared";
 import type { ModelSelectionView } from "@zcode/provider";
 import { ServiceChannels } from "@zcode/shared";
@@ -78,6 +81,10 @@ export interface ICodingPlanSubscriptionService {
    * 活动折扣在服务端计费侧按账号生效；本方法仅提供展示配置，失败返回 null。
    */
   getBillingDiscount(): Promise<CodingPlanBillingDiscountConfig | null>;
+  /** 手动领取套餐预览：未登录也能读取可领取列表；请求失败抛错由调用方处理。 */
+  getManualClaimPlanPreviews(): Promise<CodingPlanManualClaimPreviewsResponse>;
+  /** 手动领取套餐：验证码校验在服务端，未登录本地返回 401。 */
+  claimManualPlan(request: CodingPlanManualClaimRequest): Promise<CodingPlanManualClaimResponse>;
   productInfo(request: CodingPlanProductInfoRequest): Promise<CodingPlanProductInfo>;
   preview(request: CodingPlanPreviewRequest): Promise<CodingPlanPreviewResponse>;
   createSign(request: CodingPlanCreateSignRequest): Promise<CodingPlanAgreementResponse>;

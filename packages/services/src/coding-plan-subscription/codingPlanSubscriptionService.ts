@@ -49,6 +49,8 @@ export function createCodingPlanSubscriptionService(
     getModelContextBudgetStrategy: () => bigmodelProvider.getModelContextBudgetStrategy(),
     getForceUpdateConfig: () => bigmodelProvider.getForceUpdateConfig(),
     getBillingDiscount: () => bigmodelProvider.getBillingDiscount(),
+    getManualClaimPlanPreviews: () => bigmodelProvider.getManualClaimPlanPreviews(),
+    claimManualPlan: (request) => bigmodelProvider.claimManualPlan(request),
     productInfo: (request) => bigmodelProvider.productInfo(request),
     preview: (request) => bigmodelProvider.preview(request),
     createSign: (request) => bigmodelProvider.createSign(request),

@@ -51,6 +51,9 @@ import type {
   StartPlanPreviewConfig,
   ZCodeModelContextBudgetStrategy,
   DynamicWorkflowClientConfig,
+  CodingPlanManualClaimRequest,
+  CodingPlanManualClaimResponse,
+  CodingPlanManualClaimPreviewsResponse,
 } from "@zcode/shared";
 import type { ModelSelectionView } from "@zcode/provider";
 import type { OffPeakClientConfig } from "./codingPlanSubscription.js";
@@ -296,8 +299,144 @@ export class BigModelCodingPlanSubscriptionProvider {
     }
   }
 
-  async preview(request: CodingPlanPreviewRequest): Promise<CodingPlanPreviewResponse> {
-    return this.post<CodingPlanPreviewResponse>(
+  /**
+   * 手动领取套餐预览（官方 3.14.3 对齐）：GET /api/v1/zcode-plan/billing/preview。
+   * 与 client/configs 同走 ZCode 平台 API，但鉴权是可选项（未登录也能拿到可领取列表）。
+   */
+  async getManualClaimPlanPreviews(): Promise<CodingPlanManualClaimPreviewsResponse> {
+    const url = buildRuntimeZCodeApiUrlEnv("/api/v1/zcode-plan/billing/preview");
+    url.searchParams.set("app_version", ZCODE_VERSION);
+    url.searchParams.set("platform", resolveClientPlatformKey());
+    const token = await this.loadZcodeJwtToken();
+    const payload = await readCodingPlanApiJson<
+      ManualClaimEnvelope<{ server_time?: number; plans?: CodingPlanManualClaimPreviewRaw[] }>
+    >(this.apiClient, url, {
+      method: "GET",
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (payload.code !== undefined && payload.code !== 0) {
+      throw new Error(payload.msg?.trim() || "manual_claim_preview_failed");
+    }
+    const data = payload.data;
+    if (!data) {
+      throw new Error(payload.msg?.trim() || "manual_claim_preview_missing_data");
+    }
+    return {
+      ...(resolveServerTimeMs(data.server_time) === undefined
+        ? {}
+        : { serverTime: resolveServerTimeMs(data.server_time) }),
+      plans: (data.plans ?? []).flatMap((plan) => {
+        const planId = plan.plan_id?.trim() ?? "";
+        if (!planId) return [];
+        return [
+          {
+            planId,
+            name: plan.name?.trim() || planId,
+            description: plan.description?.trim() ?? "",
+            priority: Number.isFinite(plan.priority) ? (plan.priority ?? 0) : 0,
+            entitlements: (plan.entitlements ?? []).flatMap((entitlement) => {
+              const entitlementId = entitlement.entitlement_id?.trim() ?? "";
+              if (!entitlementId) return [];
+              return [
+                {
+                  entitlementId,
+                  showName: entitlement.show_name?.trim() ?? "",
+                  meter: entitlement.meter?.trim() ?? "",
+                  unitType: entitlement.unit_type?.trim() ?? "",
+                  capabilities: entitlement.capabilities ?? [],
+                  grantUnits: Number.isFinite(entitlement.grant_units)
+                    ? (entitlement.grant_units ?? 0)
+                    : 0,
+                  period: entitlement.period?.trim() ?? "",
+                  priority: Number.isFinite(entitlement.priority) ? (entitlement.priority ?? 0) : 0,
+                  ...(Number.isFinite(entitlement.effective_at)
+                    ? { effectiveAt: entitlement.effective_at }
+                    : {}),
+                },
+              ];
+            }),
+          },
+        ];
+      }),
+    };
+  }
+
+  /**
+   * 手动领取套餐（官方 3.14.3 对齐）：POST /api/v1/zcode-plan/billing/claim。
+   * 验证码参数经 X-Aliyun-Captcha-Verify-Param 头透传；未登录直接返回 401，不发起请求。
+   * 服务端 code!==0 或缺 plan 都视为失败；失败窗口结束时间仅服务端下发时带回。
+   */
+  async claimManualPlan(request: CodingPlanManualClaimRequest): Promise<CodingPlanManualClaimResponse> {
+    const token = (await this.credentialService.load(ZCODE_JWT_TOKEN_KEY))?.trim();
+    if (!token) {
+      return { success: false, code: 401, message: "" };
+    }
+    const payload = await readCodingPlanApiJson<ManualClaimEnvelope<CodingPlanManualClaimRaw>>(
+      this.apiClient,
+      buildRuntimeZCodeApiUrlEnv("/api/v1/zcode-plan/billing/claim"),
+      {
+        method: "POST",
+        timeoutMs: REQUEST_TIMEOUT_MS,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "X-Aliyun-Captcha-Verify-Param": request.captchaVerifyParam,
+          ...(request.captchaRegion ? { "X-Aliyun-Captcha-Verify-Region": request.captchaRegion } : {}),
+          "X-ZCode-App-Version": ZCODE_VERSION,
+          "X-Platform": resolveClientPlatformKey(),
+        },
+        body: JSON.stringify({ plan_id: request.planId }),
+      },
+    );
+    const rawCode = payload.code;
+    const code =
+      typeof rawCode === "number"
+        ? rawCode
+        : typeof rawCode === "string" && /^\d+$/.test(rawCode)
+          ? Number(rawCode)
+          : -1;
+    const serverTime = resolveServerTimeMs(payload.data?.server_time);
+    const endsAt = payload.data?.plan?.ends_at;
+    if (serverTime === undefined || serverTime !== 0 || !payload.data?.plan) {
+      return {
+        success: false,
+        code,
+        message: typeof payload.data?.message === "string" ? payload.data.message : "",
+        ...(serverTime === undefined ? {} : { serverTime }),
+        ...(Number.isFinite(endsAt) ? { failureEndsAt: endsAt } : {}),
+      };
+    }
+    const plan = payload.data.plan;
+    return {
+      success: true,
+      code,
+      message: payload.msg?.trim() ?? "",
+      serverTime,
+      plan: {
+        userPlanId: plan.user_plan_id?.trim() ?? "",
+        planId: plan.plan_id?.trim() || request.planId,
+        status: plan.status?.trim() ?? "",
+        ...(Number.isFinite(plan.starts_at) ? { startsAt: plan.starts_at } : {}),
+        ...(Number.isFinite(plan.ends_at) ? { endsAt: plan.ends_at } : {}),
+        entitlements: (plan.entitlements ?? []).flatMap((entitlement) => {
+          const entitlementId = entitlement.entitlement_id?.trim() ?? "";
+          if (!entitlementId) return [];
+          return [
+            {
+              entitlementId,
+              showName: entitlement.show_name?.trim() ?? "",
+              ...(Number.isFinite(entitlement.effective_at)
+                ? { effectiveAt: entitlement.effective_at }
+                : {}),
+            },
+          ];
+        }),
+      },
+    };
+  }
+
+  async preview(request: CodingPlanPreviewRequest): Promise<CodingPlanPreviewResponse> {    return this.post<CodingPlanPreviewResponse>(
       request.providerId,
       resolvePreviewPath(request.providerId),
       {
@@ -669,8 +808,12 @@ export class BigModelCodingPlanSubscriptionProvider {
     };
   }
 
-  private async loadBigModelAccessToken(): Promise<string> {
-    const token = (
+  /** ZCode 平台 JWT：手动领取预览允许未登录读取（返回 null），领取时由调用方自行 401。 */
+  private async loadZcodeJwtToken(): Promise<string | null> {
+    return (await this.credentialService.load(ZCODE_JWT_TOKEN_KEY))?.trim() ?? null;
+  }
+
+  private async loadBigModelAccessToken(): Promise<string> {    const token = (
       await this.credentialService.load(`oauth:${BIGMODEL_PROVIDER_ID}:access_token`)
     )?.trim();
     if (!token) {
@@ -1268,6 +1411,59 @@ function isValidStartPlanPreviewEntitlement(
 
 function resolveClientPlatformKey(): string {
   return `${process.platform}-${process.arch}`;
+}
+
+/** 手动领取接口的响应外壳：code 允许 string/number 双态（官方 3.14.3 语义）。 */
+interface ManualClaimEnvelope<T> {
+  code?: number | string;
+  msg?: string;
+  data?: T | null;
+}
+
+interface CodingPlanManualClaimPreviewRaw {
+  plan_id?: string;
+  name?: string;
+  description?: string;
+  priority?: number;
+  entitlements?: Array<{
+    entitlement_id?: string;
+    show_name?: string;
+    meter?: string;
+    unit_type?: string;
+    capabilities?: string[];
+    grant_units?: number;
+    period?: string;
+    priority?: number;
+    effective_at?: number;
+  }>;
+}
+
+interface CodingPlanManualClaimRaw {
+  message?: string;
+  server_time?: number;
+  plan?: {
+    user_plan_id?: string;
+    plan_id?: string;
+    status?: string;
+    starts_at?: number;
+    ends_at?: number;
+    entitlements?: Array<{
+      entitlement_id?: string;
+      show_name?: string;
+      effective_at?: number;
+    }>;
+  } | null;
+}
+
+/** 服务端时间以秒下发；本地统一换算为毫秒，非有限非负值视为未下发。 */
+function resolveServerTimeMs(seconds: unknown): number | undefined {
+  return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0
+    ? seconds * 1000
+    : undefined;
+}
+
+function buildRuntimeZCodeApiUrlEnv(path: string): URL {
+  return new URL(buildRuntimeZCodeApiUrl(process.env, path));
 }
 
 function normalizeRemoteErrorMessage(

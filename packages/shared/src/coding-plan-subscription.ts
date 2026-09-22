@@ -118,6 +118,65 @@ export interface ForceUpdateConfig {
   minimalVersion: string;
 }
 
+/** 手动领取套餐预览中的单条权益。 */
+export interface CodingPlanManualClaimEntitlement {
+  entitlementId: string;
+  showName: string;
+  meter: string;
+  unitType: string;
+  capabilities: string[];
+  grantUnits: number;
+  period: string;
+  priority: number;
+  effectiveAt?: number;
+}
+
+/** /api/v1/zcode-plan/billing/preview 返回的单个可领取套餐。 */
+export interface CodingPlanManualClaimPlanPreview {
+  planId: string;
+  name: string;
+  description: string;
+  priority: number;
+  entitlements: CodingPlanManualClaimEntitlement[];
+}
+
+export interface CodingPlanManualClaimPreviewsResponse {
+  /** 服务端时间（秒 → 本地换算为毫秒），缺省表示服务端未下发。 */
+  serverTime?: number;
+  plans: CodingPlanManualClaimPlanPreview[];
+}
+
+export interface CodingPlanManualClaimRequest {
+  planId: string;
+  /** 阿里云验证码回调参数；服务端经 X-Aliyun-Captcha-Verify-Param 头校验。 */
+  captchaVerifyParam: string;
+  captchaRegion?: string;
+}
+
+export interface CodingPlanManualClaimPlan {
+  userPlanId: string;
+  planId: string;
+  status: string;
+  startsAt?: number;
+  endsAt?: number;
+  entitlements: Array<{
+    entitlementId: string;
+    showName: string;
+    effectiveAt?: number;
+  }>;
+}
+
+export interface CodingPlanManualClaimResponse {
+  success: boolean;
+  /** 服务端业务码；未登录时本地直接返回 401，不发起请求。 */
+  code: number;
+  message: string;
+  serverTime?: number;
+  /** 领取失败且服务端给出失败窗口结束时间时返回（毫秒时间戳）。 */
+  failureEndsAt?: number;
+  plan?: CodingPlanManualClaimPlan;
+}
+
 /** 150% 配额活动单语言文案：字段按官方渲染语义命名，空串视为缺省不展示。 */
 export interface CodingPlanBillingDiscountCopy {
   badgeBody?: string;

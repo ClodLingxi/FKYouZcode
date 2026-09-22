@@ -1,0 +1,57 @@
+# 官方 3.14.3 差距分析（开源版 3.14.1 → 官方 3.14.3）
+
+> 生成于 2026-09-23。方法：提取官方 `/opt/ZCode/resources/app.asar`（3.14.3），
+> 与本仓库 3.14.1 源码/构建产物做 bundle 字符串集合与资源清单对比。
+
+## 结论摘要
+
+- 线上开源仓库（origin/main）无新提交，本次走"分析官方安装版 → 源码同步"路径。
+- **renderer 几乎无变化**：归一化（去内容哈希）后资源清单仅新增
+  `icon-dingding/discord/telegram/wecom/weixin@2x.png` 与 `lottie_light_canvas`，
+  其余数千个资源一一对应。UI 层不需要追。
+- 差距集中在 **host（agent runtime）与 main 进程**：
+  - host：官方 2.71MB vs 本地 2.32MB（压缩后差 ~400KB），新增 ~1758 个字符串标识。
+  - main：新增 ~736 个；preload+scheduler：新增 ~253 个。
+
+## 已同步（本次提交）
+
+1. **手动领取 Coding Plan（preview + claim）** — 还原自官方 host 压缩代码：
+   - `GET /api/v1/zcode-plan/billing/preview?app_version&platform`（Bearer JWT 可选）
+   - `POST /api/v1/zcode-plan/billing/claim`（Bearer JWT 必需；
+     `X-Aliyun-Captcha-Verify-Param` / 可选 `-Region` / `X-ZCode-App-Version` / `X-Platform` 头；
+     body `{plan_id}`；响应 code 接受 number/string 双态；`server_time` 秒→毫秒；
+     成功判据 `server_time===0` 且 `data.plan` 存在；失败可带 `plan.ends_at` → `failureEndsAt`）
+   - 落点：shared 类型（`CodingPlanManualClaim*`）→
+     `BigModelCodingPlanSubscriptionProvider.getManualClaimPlanPreviews/claimManualPlan` →
+     `ICodingPlanSubscriptionService` 接口与委托。
+2. **版本号** 3.14.1 → 3.14.3。
+
+## 未同步差距（按规模排序，后续迭代方向）
+
+1. **Bot 平台（host，规模最大，~280 标识）**：Telegram（long-polling 锁
+   `acquireTelegramPollingLock`）、微信（`acquireWeixinPollingLock`）、飞书
+   （WebSocket 锁 + typing reaction）、企业微信、Discord、钉钉 的 bot 运行时
+   （`acquireBotRuntimeLock`、"An enabled bot with this provider user already exists." 等）。
+   renderer 的新增社交图标即为此 UI 预留。需逆向 host bundle 中 bot runtime 状态机、
+   渠道适配器与凭据存储，工程量大。
+2. **Relay 协议（host/main）**：`AcknowledgedRelayBatchQueue/Deadline/Protocol` 等中继批处理语义。
+3. **CUA helper 安装校验（main，偏 macOS）**：
+   `captureCuaHelperBundleAttestation` / `assertCuaHelperBundleAttestationUnchanged` /
+   `assertSafeHelperDownloadUrl` / quarantine 清理等 helper bundle 完整性链路；Linux 影响有限。
+4. **Marketing touch / 营销素材体系（host）**：
+   `/api/v1/marketing/touch(+action)` 上报、营销素材 sha256 allowlist 注册表
+   （图片/视频/bundle 下载，类型嗅探 + 48MB LRU）。
+5. **Plan approval（main/UI 字符串）**：`planApprovalTitle/Header/Approve...` 审批流文案与逻辑。
+6. 其余零散：`/api/rpc-host-capability`、`/api/server-info`、`getOffPeakClientConfig` 扩展、
+   agent 权限语义细化（"Always reject the same command/file operation" 等）。
+
+## 方法备忘
+
+复现对比：
+
+```bash
+npx @electron/asar extract /opt/ZCode/resources/app.asar /tmp/official
+# 字符串集合 diff（main/host/preload/scheduler 分区）：
+grep -oE '"[A-Za-z0-9 ./_@:#,-]{8,80}"' out/**/*.js | sort -u | comm -13 local.txt - 
+# renderer 资源名归一化：sed -E 's/-[A-Za-z0-9_-]{8}\.(js|css)$//'
+```
