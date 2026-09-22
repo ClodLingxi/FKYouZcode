@@ -235,8 +235,12 @@ export class BigModelCodingPlanSubscriptionProvider {
       this.clientConfigSnapshot = null;
       this.clientConfigSnapshotExpiresAt = 0;
     }
-    const payload = await this.getClientConfigs();
     const modelSelectionView = await this.resolveOffPeakModelSelectionView?.();
+    // 强制开关短路：离线或 client/configs 拉取失败不阻断夜间免费链路入口。
+    if (process.env["ZCODE_OFFPEAK_FORCE"] === "1") {
+      return resolveOffPeakClientConfig({}, process.env, modelSelectionView);
+    }
+    const payload = await this.getClientConfigs();
     return resolveOffPeakClientConfig(payload, process.env, modelSelectionView);
   }
 
@@ -1551,6 +1555,15 @@ export function resolveOffPeakClientConfig(
       modelSelectionView,
       // ZCODE_OFFPEAK_MOCK_NO_PLAN=1 演示「非 coding plan 锁定」态；缺省视为已订阅。
       codingPlanActive: env["ZCODE_OFFPEAK_MOCK_NO_PLAN"] !== "1",
+    };
+  }
+  // 本地强制开关：夜间免费 Flash 额度不应依赖服务端灰度曝光。自建/开源版在服务端
+  // 未下发 enable_offpeak_task 时也能进入闲时链路；真实取号准入仍以服务端为准。
+  if (env["ZCODE_OFFPEAK_FORCE"] === "1") {
+    return {
+      enabled: hasModels,
+      modelSelectionView,
+      codingPlanActive: true,
     };
   }
   const raw = payload.data?.configs?.offPeak;

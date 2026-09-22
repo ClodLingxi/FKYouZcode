@@ -51,7 +51,8 @@ const manualCompactControllers = new WeakSet<AbortController>();
  * barrier 语义：
  * 1. running/goal verifier/goal continuation/tool work → typed compact intent 入 FIFO。
  * 2. held queue → 追加队尾，不绕过既有 future intent。
- * 3. running 或 queued compact 已存在 → compactOperationLock，禁止重复压缩。
+ * 3. 仅 running compact 拒绝（compactOperationLock 同步边界）；queued compact 允许
+ *    无限堆叠——多条压缩意图按 FIFO 逐条消费，每条压缩的是前一条完成后的历史。
  */
 async function compact(
   host: V4CommandCoreHost,
@@ -62,17 +63,16 @@ async function compact(
   const activeController = record.activeAbortController;
   if (
     activeTurn?.kind === "compact" ||
-    (activeController ? manualCompactControllers.has(activeController) : false) ||
-    host.hasQueueItemKind?.(record.app.sessionId, "compact")
+    (activeController ? manualCompactControllers.has(activeController) : false)
   ) {
-    host.logger?.info?.("v4 compact already running or queued, rejected", {
+    host.logger?.info?.("v4 compact already running, rejected", {
       commandId: envelope.commandId,
       sessionId: record.app.sessionId,
       workspacePath: record.workspace.workspacePath,
     });
     throw new V4GoalCompactRejectedError(
       "compactOperationLock",
-      "Compact is already running or queued",
+      "Compact is already running",
     );
   }
   if (record.restoreWarning) {
