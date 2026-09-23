@@ -78,13 +78,22 @@ const OFFICIAL_CUA_REQUIRED_SEED_PATHS = [
 ] as const;
 
 // zcode-guide 原本没有 requiredSeedPaths，seed 丢文件时会静默装出一个
-// 没有 /workflow 命令的插件——症状是命令不存在，没有任何诊断。commands/ 与技能正文都钉住。
+// 空壳插件——症状是技能不存在，没有任何诊断。官方 3.14.3 重构后（0.3.0）
+// workflow 命令移出本插件（dynamic-workflows 随运行时 bundled-skills 下发），
+// 这里钉住包内实际携带的技能入口。
 const OFFICIAL_ZCODE_GUIDE_REQUIRED_SEED_PATHS = [
-  "commands/workflow.md",
-  "skills/dynamic-workflows/SKILL.md",
-  "skills/dynamic-workflows/examples.md",
-  "skills/dynamic-workflows/patterns.md",
+  "skills/zcode-configuration-guide/SKILL.md",
+  "skills/diagnosing-skills/SKILL.md",
 ] as const;
+
+// 官方 3.14.3 桌面 stage 清单对四个办公插件的 seed 校验路径：
+// 每个都钉住 visual-judge 子代理与主技能入口（缺失即拒绝生成残缺插件缓存）。
+const OFFICE_PLUGIN_REQUIRED_SEED_PATHS = {
+  documents: ["agents/visual-judge.md", "skills/docx/SKILL.md"],
+  pdf: ["agents/visual-judge.md", "skills/pdf/SKILL.md"],
+  presentations: ["agents/visual-judge.md", "skills/pptx/SKILL.md"],
+  spreadsheets: ["agents/visual-judge.md", "skills/xlsx/SKILL.md"],
+} as const;
 
 export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = [
   {
@@ -242,6 +251,33 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     ],
     version: "0.1.0",
   },
+  // ── 办公文档四件套（官方 3.14.3 回填）：纯内容型（skills + visual-judge agent），
+  // 官方默认不启用（商店手动开），listing 文案取自各 plugin.json 的 i18n 字段。 ──
+  ...(
+    [
+      { displayName: "Documents", displayNameZh: "Word 文档", name: "documents", descriptionZh: "面向 DOCX 的 Word 文档制作技能：创建、编辑、排版、审阅与批注。" },
+      { displayName: "PDF", displayNameZh: "PDF 文档", name: "pdf", descriptionZh: "PDF 制作技能：报告、简历、海报、封面的排版与渲染输出。" },
+      { displayName: "Presentations", displayNameZh: "演示文稿", name: "presentations", descriptionZh: "面向 PPTX 的演示文稿制作技能，并提供视觉验收评审 Agent。" },
+      { displayName: "Spreadsheets", displayNameZh: "电子表格", name: "spreadsheets", descriptionZh: "面向 XLSX 的电子表格技能：创建、编辑、分析、图表与格式转换。" },
+    ] as const
+  ).map((plugin) => ({
+    listing: {
+      author: ZAI_AUTHOR,
+      category: "productivity",
+      displayName: plugin.displayName,
+      displayName_i18n: { "zh-CN": plugin.displayNameZh },
+      description_i18n: { "zh-CN": plugin.descriptionZh },
+    },
+    name: plugin.name,
+    requiredSeedPaths: OFFICE_PLUGIN_REQUIRED_SEED_PATHS[plugin.name],
+    rootCandidates: [
+      `packages/${plugin.name}-plugin`,
+      `../${plugin.name}-plugin`,
+      `../../${plugin.name}-plugin`,
+      `../../../${plugin.name}-plugin`,
+    ],
+    version: "0.1.7",
+  })),
   {
     defaultEnabled: true,
     name: "plugin-creator",
@@ -293,8 +329,8 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     version: "0.1.0",
   },
   {
-    // 纯内容型插件（只有 commands + skills，无 MCP / 无系统依赖），默认启用，
-    // 让用户/agent 开箱即用地拿到 ZCode 配置指南、自诊断技能与 dynamic workflow 编写指南。
+    // 纯内容型插件（只有 skills，无 MCP / 无系统依赖），默认启用，
+    // 让用户/agent 开箱即用地拿到 ZCode 配置指南与自诊断技能。
     defaultEnabled: true,
     listing: {
       author: ZAI_AUTHOR,
@@ -321,7 +357,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "../../zcode-guide-plugin",
       "../../../zcode-guide-plugin",
     ],
-    version: "0.2.0",
+    version: "0.3.0",
   },
   {
     // 产品决策：电脑控制回退为默认关闭，需用户在设置页显式开启。

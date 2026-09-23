@@ -111,6 +111,25 @@ const officialPluginPackages = [
     runtimeBuildScript: "scripts/build.mjs",
     stagedPath: "packages/node-repl-host",
   },
+
+  // ── 官方 3.14.3 回填：纯内容型插件（无 runtime 构建步骤），官方桌面包
+  // stage 清单（13 个）中可开源携带的 9 个；office 四件套的 requiredSeedPaths
+  // 与官方 host 侧校验一致（visual-judge agent + 主技能入口）。 ──
+  ...[
+    "documents-plugin",
+    "pdf-plugin",
+    "presentations-plugin",
+    "spreadsheets-plugin",
+    "image-search-plugin",
+    "restore-legacy-sessions-plugin",
+    "plugin-creator-plugin",
+    "skill-creator-plugin",
+    "zcode-guide-plugin",
+  ].map((stagedPath) => ({
+    packageName: `@zcode/${stagedPath.replace(/-plugin$/, "")}-plugin`,
+    relativePath: `apps/zcode-cli/packages/${stagedPath}`,
+    stagedPath: `packages/${stagedPath}`,
+  })),
 ];
 const includedOfficialPluginTopLevelPaths = new Set([
   ".mcp.json",
