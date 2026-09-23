@@ -158,6 +158,14 @@ export type ServiceChannelName = (typeof ServiceChannels)[keyof typeof ServiceCh
 export const PlatformChannels = {
   /** 打开系统目录选择框 */
   SelectDirectory: "zcode:select-directory",
+  /** Web Remote Control：查询设备端状态（含当前配对 QR） */
+  WebRemoteGetState: "zcode:web-remote:get-state",
+  /** Web Remote Control：开启远控（连 relay 注册并出码） */
+  WebRemoteStart: "zcode:web-remote:start",
+  /** Web Remote Control：停止远控 */
+  WebRemoteStop: "zcode:web-remote:stop",
+  /** Web Remote Control：重置配对（轮换 passHash，旧 QR 全部失效） */
+  WebRemoteResetPairing: "zcode:web-remote:reset-pairing",
   /** 打开系统文件选择框 */
   SelectFile: "zcode:select-file",
   /** 打开系统多文件选择框 */

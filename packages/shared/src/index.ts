@@ -304,3 +304,8 @@ export * from "./clientConfig.js";
 export * from "./pluginStoreOrdering.js";
 export * from "./session-debug.js";
 export { redactFeedbackText } from "./feedbackPrivacy.js";
+
+export * from "./web-remote-control/protocol.js";
+export * from "./web-remote-control/rpcFrameCodec.js";
+export * from "./web-remote-control/rpcFrameSender.js";
+export * from "./web-remote-control/rpcFrameReceiver.js";

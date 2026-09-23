@@ -199,6 +199,8 @@ import {
 } from "./resourceManagerWindow.js";
 import { createDesktopHelpConfigReader } from "./desktopHelpConfig.js";
 import { registerPlatformIpcHandlers } from "./desktopMainIpcPlatform.js";
+import { WebRemoteControlService, type WebSocketLike } from "./webRemoteControlService.js";
+import { registerWebRemoteControlIpc } from "./webRemoteControlIpc.js";
 import {
   loadCliMcpFromUserDirectory,
   migrateLegacyCommonMcp,
@@ -2177,6 +2179,20 @@ app.whenReady().then(async () => {
     stateFile: join(app.getPath("userData"), "zcode-data-size-telemetry.json"),
   });
   registerDesktopNetworkTelemetry(logger);
+
+  // Web Remote Control 设备端：手机 ↔ relay ↔ 本服务 ↔ host ChannelServer。
+  // relay 端点可用 ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL / ZCODE_WEB_REMOTE_CONTROL_URL
+  // 指向自建 relay（apps/web-remote-relay）。
+  const webRemoteControlService = new WebRemoteControlService({
+    userDataDir: app.getPath("userData"),
+    appVersion: ZCODE_VERSION,
+    resolveHostChild: () => resolveCronDispatchHost(),
+    log: (message, error) => logger.info(message, error),
+    createWebSocket: (url) => new WebSocket(url) as unknown as WebSocketLike,
+  });
+  registerWebRemoteControlIpc(webRemoteControlService, (message, error) =>
+    logger.info(message, error),
+  );
 
   // 本地未打包 dev 构建（app.isPackaged === false）必须跳过远端强制升级 gate。
   // 原因：force-update gate 只看 ZCODE_ENV === "production"，但 dev 构建（如 dev:desktop:cua

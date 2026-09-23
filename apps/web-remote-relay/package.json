@@ -1,0 +1,13 @@
+{
+  "name": "@zcode/web-remote-relay",
+  "version": "3.14.3",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted Web Remote Control relay：认证 + 配对 + data 信封透传（协议见 packages/shared/src/web-remote-control）。",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
