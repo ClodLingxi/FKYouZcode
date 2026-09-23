@@ -231,6 +231,11 @@ export function shouldPreferDomesticRemoteCdn(o: { locale?: string; timeZone?: s
 
 ## B 组：依赖官方服务端（实现了也没有官方后端，标注服务端契约）
 
+> **进度（2026-09-24）**：设备端（desktop main）+ 协议库（shared/web-remote-control）+ 自建 relay
+> （apps/web-remote-relay）已实现并提交（0de82bf）；协议规格见
+> [web-remote-protocol](./official-3.14.3-web-remote-protocol.md)。剩余：自建 Web 客户端、
+> renderer 设置页 QR UI、44 个 channel 的逐方法参数 schema。
+
 ### B1. Web Remote Control（手机/网页远控）全链路 —— 10-25 人日 + 自建 relay 服务端
 
 **语义还原**（main/index.js + main/chunk-C6VCYWB4.js 16.5KB + chunk-GJUBRD53.js 协议层 + host/chunk-B7L5SK4K.js 契约）：
