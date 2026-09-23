@@ -270,3 +270,14 @@ bridge ready 后，**rpc-frame 的 dataBase64 拼接出的字节 = main↔host M
 - `x-zcode-rpc-host-capability` 头的取值 schema（属 Server Remote 子系统）。
 - zcode-agent v4 网关 hello 中 `protocolVersion` 常量的字面值。
 - 各 channel 的逐方法参数 schema（与桌面 renderer 同源，数量过大，未逐一枚举）。
+
+---
+
+## 实施进度（开源版，2026-09 更新）
+
+- ✅ 自建手机 Web 客户端 `apps/web-remote-client`（esbuild 单文件 SPA；配对 → bootstrap → bridge-open → v4 订阅/发送/队列/压缩）
+- ✅ 桌面 main 控制面：`webRemoteControlControlPlane.ts`（bootstrap / workspace-bridge-open 应答，桥身份由手机端铸造、设备端采纳）
+- ✅ 桌面 main 桥：`webRemoteControlHostBridge.ts`（rpc-frame ↔ MessagePort，AttachServicePort + web-remote-replayable 档）
+- ✅ renderer 设置页 QR 卡：`packages/ui/src/settings/WebRemoteControlSection.tsx`（开始/停止/重置配对 + 二维码）
+- ✅ 逐方法参数清单：`docs/web-remote-rpc-channel-inventory.md`
+- 端到端冒烟通过：静态托管 / 双端认证 / bootstrap / bridge-open / 双向 2.5MB 帧 / 4010 顶替

@@ -2134,6 +2134,22 @@ const enUS: Record<string, string> = {
   "settings.browser.import.localStorageFailed":
     "The Chrome LocalStorage snapshot could not be read. Close Chrome and try again.",
   "settings.browser.import.failed": "Chrome browser data import failed.",
+
+  "settings.webRemote.title": "Web Remote Control",
+  "settings.webRemote.description": "Generate a pairing QR code so your phone can view and control the current session from a web page.",
+  "settings.webRemote.start": "Enable",
+  "settings.webRemote.stop": "Stop",
+  "settings.webRemote.reset": "Reset pairing",
+  "settings.webRemote.resetHint": "Rotate the pairing credential; all previously generated QR codes become invalid",
+  "settings.webRemote.resetConfirm": "Resetting pairing invalidates all generated QR codes; you must scan again. Continue?",
+  "settings.webRemote.status": "Status",
+  "settings.webRemote.customRelay": "Using a self-hosted relay endpoint.",
+  "settings.webRemote.qrAlt": "Pairing QR code",
+  "settings.webRemote.state.disabled": "Off",
+  "settings.webRemote.state.pairing": "Waiting for pairing",
+  "settings.webRemote.state.connecting": "Connecting",
+  "settings.webRemote.state.ready": "Ready",
+  "settings.webRemote.state.reconnecting": "Reconnecting",
   "settings.browser.import.success":
     "Imported {cookies} cookies and {entries} LocalStorage entries from {origins} sites.",
   "settings.browser.import.successWithSkipped":

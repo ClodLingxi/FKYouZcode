@@ -14,6 +14,17 @@ export function createDesktopPlatform(options: {
     selectFile: () => window.zcode.selectFile(),
     selectFiles: () => window.zcode.selectFiles?.() ?? Promise.resolve([]),
     createTempTextAttachment: (payload) => window.zcode.createTempTextAttachment(payload),
+    webRemoteGetState: () =>
+      window.zcode.webRemoteGetState?.() ??
+      Promise.resolve({ state: "disabled", qrUrl: null }),
+    webRemoteStart: () =>
+      window.zcode.webRemoteStart?.() ??
+      Promise.resolve({ state: "disabled", qrUrl: null }),
+    webRemoteStop: () =>
+      window.zcode.webRemoteStop?.() ?? Promise.resolve({ state: "disabled", qrUrl: null }),
+    webRemoteResetPairing: () =>
+      window.zcode.webRemoteResetPairing?.() ??
+      Promise.resolve({ state: "disabled", qrUrl: null }),
     onRemoteConnectionLog: (handler) => window.zcode.onRemoteConnectionLog(handler),
     onRemoteSessionClosed: (handler) => window.zcode.onRemoteSessionClosed(handler),
     activateOrSetWorkspace: (path) =>

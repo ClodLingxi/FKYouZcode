@@ -509,6 +509,15 @@ export type CuaOsSupport =
   | { kind: "macos-below-minimum"; minimumMacOs: string; currentMacOs: string }
   | { kind: "not-applicable" };
 
+/** Web Remote Control 设备端状态（设置页 QR 卡消费）。 */
+export interface WebRemoteControlStatus {
+  state: "disabled" | "pairing" | "connecting" | "ready" | "reconnecting";
+  /** 当前配对二维码 URL（未 ready 时为 null）。 */
+  qrUrl: string | null;
+  /** relay 端点被 env 覆盖（自建部署）。 */
+  usingCustomRelay?: boolean;
+}
+
 /**
  * 平台操作接口 —— 替代直接访问 window.zcode
  *
@@ -557,6 +566,15 @@ export interface IPlatformService {
   createTempTextAttachment?(
     payload: CreateTempTextAttachmentRequest,
   ): Promise<CreateTempTextAttachmentResult>;
+
+  /** Web Remote Control：查询设备端状态（含当前配对 QR）。非 Desktop 平台不实现。 */
+  webRemoteGetState?(): Promise<WebRemoteControlStatus>;
+  /** Web Remote Control：开启远控（连 relay 注册并出码）。 */
+  webRemoteStart?(): Promise<WebRemoteControlStatus>;
+  /** Web Remote Control：停止远控。 */
+  webRemoteStop?(): Promise<WebRemoteControlStatus>;
+  /** Web Remote Control：重置配对（轮换 passHash，旧 QR 全部失效）。 */
+  webRemoteResetPairing?(): Promise<WebRemoteControlStatus>;
 
   /** 订阅当前窗口内远程连接过程日志，返回 disposer */
   onRemoteConnectionLog(handler: (entry: RemoteConnectionRuntimeLog) => void): () => void;

@@ -111,6 +111,11 @@ declare global {
       syncActiveTaskSession(sessionId: string | null): void;
       /** 同步需要 main 进程即时感知的应用设置 */
       syncAppSettings?(patch: Partial<AppSettings>): void;
+      /** Web Remote Control：状态/开关/重置配对（设置页 QR 卡消费） */
+      webRemoteGetState?(): Promise<import("@zcode/shared").WebRemoteControlStatus>;
+      webRemoteStart?(): Promise<import("@zcode/shared").WebRemoteControlStatus>;
+      webRemoteStop?(): Promise<import("@zcode/shared").WebRemoteControlStatus>;
+      webRemoteResetPairing?(): Promise<import("@zcode/shared").WebRemoteControlStatus>;
       /** 注册 main 进程要求聚焦指定 workspace tab 的回调，返回 disposer */
       onFocusTab(handler: (path: string) => void): () => void;
       /** 注册 main 进程触发新建 tab 的回调，返回 disposer */

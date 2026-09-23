@@ -2012,6 +2012,22 @@ const zhCN: Record<string, string> = {
   "settings.browser.import.localStorageFailed":
     "Chrome LocalStorage 快照读取失败。请关闭 Chrome 后重试。",
   "settings.browser.import.failed": "Chrome 浏览器数据导入失败。",
+
+  "settings.webRemote.title": "手机远控（Web Remote Control）",
+  "settings.webRemote.description": "开启后生成配对二维码，手机扫码即可在网页上查看与操控当前会话。",
+  "settings.webRemote.start": "开启远控",
+  "settings.webRemote.stop": "停止远控",
+  "settings.webRemote.reset": "重置配对",
+  "settings.webRemote.resetHint": "轮换配对凭据，之前生成的二维码全部失效",
+  "settings.webRemote.resetConfirm": "重置配对将使已生成的二维码全部失效，需要重新扫码。确定继续？",
+  "settings.webRemote.status": "状态",
+  "settings.webRemote.customRelay": "当前使用自建 relay 端点。",
+  "settings.webRemote.qrAlt": "配对二维码",
+  "settings.webRemote.state.disabled": "未开启",
+  "settings.webRemote.state.pairing": "等待配对",
+  "settings.webRemote.state.connecting": "连接中",
+  "settings.webRemote.state.ready": "已就绪",
+  "settings.webRemote.state.reconnecting": "重连中",
   "settings.browser.import.success":
     "已导入 {cookies} 个 Cookie，以及 {origins} 个站点的 {entries} 条 LocalStorage 数据。",
   "settings.browser.import.successWithSkipped":

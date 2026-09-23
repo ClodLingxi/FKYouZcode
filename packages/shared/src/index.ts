@@ -194,6 +194,7 @@ export type {
   SaveFileRequest,
   SaveFileResult,
   PrintPageToPdfResult,
+  WebRemoteControlStatus,
   DesktopCommandId,
   CuaOsSupport,
   DesktopWindowChromeState,

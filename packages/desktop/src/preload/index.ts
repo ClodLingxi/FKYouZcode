@@ -307,6 +307,12 @@ contextBridge.exposeInMainWorld("zcode", {
   /** 长文本粘贴落盘为真正的本地附件，避免正文和 prompt payload 被撑大 */
   createTempTextAttachment: (payload: CreateTempTextAttachmentRequest) =>
     ipcRenderer.invoke(PlatformChannels.CreateTempTextAttachment, payload),
+  /** Web Remote Control：状态/开关/重置配对（QR 由设置页渲染） */
+  webRemoteGetState: (): Promise<unknown> => ipcRenderer.invoke(PlatformChannels.WebRemoteGetState),
+  webRemoteStart: (): Promise<unknown> => ipcRenderer.invoke(PlatformChannels.WebRemoteStart),
+  webRemoteStop: (): Promise<unknown> => ipcRenderer.invoke(PlatformChannels.WebRemoteStop),
+  webRemoteResetPairing: (): Promise<unknown> =>
+    ipcRenderer.invoke(PlatformChannels.WebRemoteResetPairing),
   /** 订阅当前窗口内远程连接过程日志，返回 disposer */
   onRemoteConnectionLog: (callback: (entry: RemoteConnectionRuntimeLog) => void) => {
     const handler = (_event: unknown, payload: unknown) =>
