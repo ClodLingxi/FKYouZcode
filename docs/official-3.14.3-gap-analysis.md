@@ -2,6 +2,14 @@
 
 > 生成于 2026-09-23。方法：提取官方 `/opt/ZCode/resources/app.asar`（3.14.3），
 > 与本仓库 3.14.1 源码/构建产物做 bundle 字符串集合与资源清单对比。
+>
+> **详细移植蓝图（subagent 深度逆向产出）**：
+> - [bot 平台（Telegram/微信/飞书/Webhook）](./official-3.14.3-bot-platform-port-blueprint.md)
+>   —— 零服务端依赖，四层架构（Repo/Provider/RuntimeLock/Service），最小闭环 3-5 人日
+> - [其余全部差距 A/B/C/D 分级清单](./official-3.14.3-remaining-gaps-blueprint.md)
+>   —— A 组纯客户端 7 项（Output Style 服务、CDN 双源 fallback 已实现、Marketing Touch 等）、
+>   B 组依赖官方服务端 3 项（Web Remote Control/AcknowledgedRelay 等）、
+>   C 组 macOS-only（CUA 真实现，不建议移植）、D 组误报/已有 12 项（plan approval 其实已有）
 
 ## 结论摘要
 
