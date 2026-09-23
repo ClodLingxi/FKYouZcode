@@ -9,9 +9,15 @@
 //   ⑥ {type:"data"} 信封原样透传（不解析 payload、不排序、不缓存）；
 //   ⑦ 关闭码 4004/4009/4010/4011/4012/4013；
 //   ⑧ 不实现 rpc-frame 层（那是 手机↔桌面 端到端的，本进程只透传）。
+//   ⑨ 顺带托管手机客户端静态页（../web-remote-client/dist），扫码即用。
 //
 // 运行：PORT=8787 node server.mjs   （无状态，重启后 device_sid 失效，桌面侧重配对即可）
+// 自建：先在 apps/web-remote-client 跑 `node build.mjs` 生成 dist/。
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import { readFileSync, existsSync } from "node:fs";
+import { dirname, extname, join, normalize } from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -24,6 +30,37 @@ const CLOSE = {
   UNKNOWN_DEVICE: 4011,
   INVALID_REGISTRATION: 4012,
   SERVER_SHUTDOWN: 4013,
+};
+
+// ── 静态托管手机客户端（./client-dist 或 apps/web-remote-client/dist） ──
+
+const CLIENT_DIST =
+  process.env.WEB_REMOTE_CLIENT_DIST?.trim() ||
+  join(dirname(fileURLToPath(import.meta.url)), "..", "web-remote-client", "dist");
+
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+};
+
+function serveStatic(pathname, res) {
+  const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+  const file = normalize(join(CLIENT_DIST, relative));
+  if (!file.startsWith(CLIENT_DIST) || !existsSync(file)) {
+    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    res.end("not found (build the client: cd apps/web-remote-client && node build.mjs)");
+    return;
+  }
+  const body = readFileSync(file);
+  res.writeHead(200, {
+    "content-type": MIME[extname(file)] ?? "application/octet-stream",
+    "cache-control": "no-cache",
+  });
+  res.end(body);
 };
 
 /** device_sid → { passHash, device: socket|null, remote: socket|null }（进程内，无持久化）。 */
@@ -70,8 +107,11 @@ function setPeer(entry, role, socket) {
   else entry.remote = socket;
 }
 
-const wss = new WebSocketServer({ port: PORT, maxPayload: MAX_MESSAGE_BYTES });
-console.log(`[web-remote-relay] listening on :${PORT} (path /ws)`);
+const httpServer = createServer((req, res) => serveStatic(new URL(req.url ?? "/", "http://x").pathname, res));
+const wss = new WebSocketServer({ server: httpServer, path: "/ws", maxPayload: MAX_MESSAGE_BYTES });
+httpServer.listen(PORT, () => {
+  console.log(`[web-remote-relay] listening on :${PORT} (ws path /ws; client static: ${CLIENT_DIST})`);
+});
 
 wss.on("connection", (socket) => {
   // 会话状态：未注册/未认证前只允许注册与认证消息。

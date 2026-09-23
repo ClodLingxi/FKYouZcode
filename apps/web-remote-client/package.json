@@ -1,0 +1,11 @@
+{
+  "name": "zcode-web-remote-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ZCode Web Remote Control 手机客户端（standalone 静态 SPA，esbuild 打包仓库 shared/rpc 源码）",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "tsc -p tsconfig.json --noEmit"
+  }
+}

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'unsafe-inline'; connect-src ws: wss:; img-src 'self' data:"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <title>ZCode 远控</title>
+    <style>
+      :root {
+        color-scheme: dark light;
+        --bg: #101014;
+        --panel: #18181f;
+        --border: #2a2a35;
+        --text: #e8e8ee;
+        --subtle: #9a9aa8;
+        --accent: #5b8cff;
+        --user-bubble: #2b3b63;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.5 -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+      }
+      #app { height: 100dvh; }
+      .center { height: 100%; display: grid; place-items: center; padding: 24px; text-align: center; }
+      .status { color: var(--subtle); }
+      .error { color: #ff8484; word-break: break-all; }
+
+      .pair { max-width: 480px; margin: 0 auto; padding: 32px 20px; display: grid; gap: 14px; }
+      .pair h1 { font-size: 22px; margin: 0; }
+      .pair textarea, .composer textarea {
+        width: 100%; background: var(--panel); color: var(--text);
+        border: 1px solid var(--border); border-radius: 10px; padding: 10px; resize: none;
+      }
+      .pair button {
+        padding: 10px 16px; border-radius: 10px; border: 1px solid var(--border);
+        background: var(--panel); color: var(--text); font-size: 15px;
+      }
+      .hint { color: var(--subtle); font-size: 12px; }
+
+      .chat { height: 100dvh; display: flex; flex-direction: column; }
+      .chat-header {
+        display: flex; flex-direction: column; gap: 2px; padding: 10px 14px;
+        border-bottom: 1px solid var(--border); background: var(--panel);
+      }
+      .rows { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+      .row { max-width: 88%; padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; }
+      .row.user { align-self: flex-end; background: var(--user-bubble); }
+      .row.assistant { align-self: flex-start; background: var(--panel); }
+      .row.assistant.streaming::after { content: "▍"; color: var(--subtle); animation: blink 1s infinite; }
+      @keyframes blink { 50% { opacity: 0; } }
+      .row.reasoning { align-self: flex-start; background: transparent; border: 1px dashed var(--border); color: var(--subtle); }
+      .row.tool { align-self: stretch; max-width: 100%; background: var(--panel); font-size: 13px; }
+      .row.tool summary { cursor: pointer; color: var(--subtle); }
+      .row.tool pre { overflow-x: auto; margin: 6px 0 0; font-size: 12px; }
+      .row.tool.success summary { color: #7fd18b; }
+      .row.tool.error summary { color: #ff8484; }
+      .row.subagent { align-self: flex-start; background: var(--panel); color: var(--subtle); font-size: 13px; }
+
+      .composer { border-top: 1px solid var(--border); background: var(--panel); padding: 10px 12px; display: grid; gap: 8px; }
+      .input-row { display: flex; gap: 8px; }
+      .input-row textarea { flex: 1; min-height: 44px; }
+      button.primary, .actions button, .queue button, button {
+        border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--text);
+      }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #fff; padding: 0 18px; }
+      .actions { display: flex; gap: 8px; }
+      .actions button { flex: 1; padding: 8px 0; font-size: 13px; }
+      .queue { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+      .queue-item {
+        display: inline-flex; align-items: center; gap: 6px; background: var(--bg);
+        border: 1px solid var(--border); border-radius: 8px; padding: 2px 8px; font-size: 12px; max-width: 100%;
+      }
+      .queue-item button { border: none; padding: 0 2px; color: var(--subtle); }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="app.js" defer></script>
+  </body>
+</html>

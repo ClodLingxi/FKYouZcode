@@ -309,3 +309,6 @@ export * from "./web-remote-control/protocol.js";
 export * from "./web-remote-control/rpcFrameCodec.js";
 export * from "./web-remote-control/rpcFrameSender.js";
 export * from "./web-remote-control/rpcFrameReceiver.js";
+// node:crypto 依赖：root index 面向 Node 侧（electron main/host/CLI）；
+// 浏览器 bundle 一律走 "@zcode/shared/web-remote-control" 子路径入口。
+export * from "./web-remote-control/pairingCryptoNode.js";

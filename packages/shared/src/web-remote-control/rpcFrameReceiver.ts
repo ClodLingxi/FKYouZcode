@@ -1,6 +1,7 @@
 // ============================================================
 // rpc-frame 入站端（官方 3.14.3 对齐）：严格顺序、指纹去重、分片组装、CRC 校验、累积 ack。
-import { EventEmitter } from "node:events";
+import { MiniEmitter } from "./emitter.js";
+import { webRemoteBase64ToBytes, webRemoteBytesToBase64 } from "./base64.js";
 import {
   WEB_REMOTE_ASSEMBLY_TIMEOUT_MS,
   WEB_REMOTE_MAX_PHYSICAL_FRAME_BYTES,
@@ -32,7 +33,7 @@ function frameFingerprint(frame: RpcFrameEnvelope): string {
   return `${frame.messageSeq}:${frame.fragmentIndex}:${frame.dataBase64.length}`;
 }
 export class RpcFrameReceiver {
-  private readonly emitter = new EventEmitter();
+  private readonly emitter = new MiniEmitter();
   private lastDeliveredMessageSeq = -1;
   private reassembly: ReassemblyState | null = null;
   private readonly seenMessageFingerprints = new Map<number, string>();
@@ -149,9 +150,9 @@ export class RpcFrameReceiver {
     }
     let bytes: Uint8Array;
     try {
-      bytes = new Uint8Array(Buffer.from(frame.dataBase64, "base64"));
+      bytes = webRemoteBase64ToBytes(frame.dataBase64);
       // canonical base64 校验：重编码必须一致（官方语义）。
-      if (Buffer.from(bytes).toString("base64") !== frame.dataBase64) {
+      if (webRemoteBytesToBase64(bytes) !== frame.dataBase64) {
         this.emitter.emit("fault", "invalidBase64", `index=${frame.fragmentIndex}`);
         return;
       }

@@ -1,6 +1,7 @@
 // ============================================================
 // rpc-frame 出站端（官方 3.14.3 对齐）：分片、CRC、重放缓冲、累积 ack、流控水位。
-import { EventEmitter } from "node:events";
+import { MiniEmitter } from "./emitter.js";
+import { webRemoteBytesToBase64 } from "./base64.js";
 import {
   WEB_REMOTE_MAX_FRAGMENTS,
   WEB_REMOTE_MAX_MESSAGE_BYTES,
@@ -30,7 +31,7 @@ interface PendingBatch {
 }
 
 export class RpcFrameSender {
-  private readonly emitter = new EventEmitter();
+  private readonly emitter = new MiniEmitter();
   private messageSeq = 0;
   private unackedBytes = 0;
   private saturated = false;
@@ -104,7 +105,7 @@ export class RpcFrameSender {
         fragmentCount,
         messageBytes: bytes.length,
         checksum: { algorithm: "crc32", value: checksum },
-        dataBase64: Buffer.from(slice).toString("base64"),
+        dataBase64: webRemoteBytesToBase64(slice),
       };
       frames.push(frame);
     }

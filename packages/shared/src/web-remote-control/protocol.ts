@@ -4,8 +4,9 @@
 // 拓扑：手机 Web 客户端 ↔ relay（认证 + 按 device_sid 配对 + data 信封透传）
 //       ↔ 桌面 main（role="device"）↔ MessagePort ↔ host ChannelServer。
 // rpc-frame 可靠传输（rpcFramePipe.ts）是手机↔main 端到端的；relay 不解析不排序。
-// 本模块只放 schema 与纯函数（认证/QR/常量），运行时装配在 desktop main。
-import { createHash, createHmac, randomBytes } from "node:crypto";
+// 本模块只放 schema 与纯函数（QR/常量/信封 schema），浏览器与 Node 通用。
+// 依赖 node:crypto 的配对凭据生成与 HMAC proof 在 pairingCryptoNode.ts（Node 专用）；
+// Web 端用 WebCrypto 实现同一算法，回归口径见 WEB_REMOTE_AUTH_TEST_VECTOR。
 import { z } from "zod";
 
 // ── 常量（官方 3.14.3 值） ──
@@ -79,28 +80,7 @@ export interface WebRemotePairingSecret {
   passHash: string;
 }
 
-export function createPairingSecret(randomSource: (size: number) => Buffer = randomBytes): WebRemotePairingSecret {
-  const password = randomSource(24).toString("base64url");
-  return { password, passHash: createHash("sha256").update(password, "utf8").digest("base64") };
-}
-
-/**
- * 挑战应答：proof = base64url(HMAC-SHA256(key=passHash ASCII, msg=`${nonce}|${role}|${deviceSid}`))。
- * 官方向量：passHash="dGVzdF9oYXNo", nonce="nonce-1", role="device", deviceSid="device-1"
- *   → proof="XK0m7u-26VS88uk7ISAX5Z_9pjzq8jqyP77N-HkCsPE"。
- */
-export function computeRelayAuthProof(params: {
-  passHash: string;
-  nonce: string;
-  role: string;
-  deviceSid: string;
-}): string {
-  return createHmac("sha256", params.passHash)
-    .update(`${params.nonce}|${params.role}|${params.deviceSid}`, "utf8")
-    .digest("base64url");
-}
-
-/** 官方测试向量；回归口径，勿改。 */
+/** 官方测试向量；回归口径，勿改。proof = base64url(HMAC-SHA256(key=passHash, msg=nonce|role|deviceSid))。 */
 export const WEB_REMOTE_AUTH_TEST_VECTOR = {
   passHash: "dGVzdF9oYXNo",
   nonce: "nonce-1",
@@ -264,3 +244,84 @@ export const relayServerMessageSchema = z.discriminatedUnion("type", [
 
 export type RelayClientMessage = z.infer<typeof relayClientMessageSchema>;
 export type RelayServerMessage = z.infer<typeof relayServerMessageSchema>;
+
+// ── 设备控制面（官方 3.14.3 对齐，手机 ↔ desktop main，走 data 信封内 JSON） ──
+// bootstrap：配对成功后手机拉取桌面 workspace 列表；workspace-bridge-open 打开
+// 指定 workspace 的 RPC 桥。MVP：本地 workspace 单桥，桥在 auth_ok 后已挂好。
+
+const requestIdSchema = z.string().min(1).max(128);
+
+export const remoteControlRequestSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("bootstrap-request"),
+    request_id: requestIdSchema,
+    client_ts: z.number().int().nonnegative().optional(),
+  }),
+  z.object({
+    type: z.literal("workspace-list-request"),
+    request_id: requestIdSchema,
+    client_ts: z.number().int().nonnegative().optional(),
+  }),
+  z.object({
+    type: z.literal("workspace-bridge-open"),
+    request_id: requestIdSchema,
+    workspace_key: z.string().min(1).max(512),
+    /** 手机端铸造的共享桥身份：设备端 rpc-frame 收发端必须采纳同一 id（官方语义）。 */
+    bridge_session_id: z.string().min(1).max(128),
+    client_ts: z.number().int().nonnegative().optional(),
+  }),
+]);
+export type RemoteControlRequest = z.infer<typeof remoteControlRequestSchema>;
+
+export interface RemoteWorkspaceDescriptor {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  label?: string;
+  kind: "local" | "remote";
+}
+
+export const remoteWorkspaceDescriptorSchema = z.object({
+  workspace_path: z.string().min(1).max(4096),
+  workspace_identity: z.string().min(1).max(256).optional(),
+  label: z.string().max(256).optional(),
+  kind: z.enum(["local", "remote"]),
+});
+
+const controlResponseBase = {
+  request_id: requestIdSchema,
+  success: z.boolean(),
+  error: z.string().max(512).optional(),
+  desktop_app_version: z.string().max(64).optional(),
+};
+
+export const remoteControlResponseSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("bootstrap-response"),
+    ...controlResponseBase,
+    workspaces: z.array(remoteWorkspaceDescriptorSchema).optional(),
+    active_workspace_key: z.string().max(512).optional(),
+  }),
+  z.object({
+    type: z.literal("workspace-list-response"),
+    ...controlResponseBase,
+    workspaces: z.array(remoteWorkspaceDescriptorSchema).optional(),
+    active_workspace_key: z.string().max(512).optional(),
+  }),
+  z.object({
+    type: z.literal("workspace-bridge-ready"),
+    ...controlResponseBase,
+    workspace_key: z.string().max(512).optional(),
+    bridge: z.object({ kind: z.literal("local") }),
+  }),
+  z.object({
+    type: z.literal("workspace-bridge-error"),
+    ...controlResponseBase,
+    workspace_key: z.string().max(512).optional(),
+    reason: z.string().max(128).optional(),
+  }),
+]);
+export type RemoteControlResponse = z.infer<typeof remoteControlResponseSchema>;
+
+export function workspaceKeyOf(workspace: { workspacePath: string; workspaceIdentity?: string }): string {
+  return workspace.workspaceIdentity?.trim() || workspace.workspacePath;
+}

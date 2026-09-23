@@ -2187,6 +2187,13 @@ app.whenReady().then(async () => {
     userDataDir: app.getPath("userData"),
     appVersion: ZCODE_VERSION,
     resolveHostChild: () => resolveCronDispatchHost(),
+    resolveWorkspaces: () => {
+      const paths = new Set<string>();
+      for (const windowPaths of windowWorkspaceMap.values()) {
+        for (const workspacePath of windowPaths) paths.add(workspacePath);
+      }
+      return [...paths].map((workspacePath) => ({ workspacePath }));
+    },
     log: (message, error) => logger.info(message, error),
     createWebSocket: (url) => new WebSocket(url) as unknown as WebSocketLike,
   });

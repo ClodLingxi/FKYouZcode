@@ -1,34 +1,27 @@
 // Web Remote Control 设备端（main 进程，官方 3.14.3 对齐）。
 //
-// 拓扑：手机 Web 客户端 ↔ relay ↔ 本服务（role="device"）↔ MessagePort ↔ host ChannelServer。
+// 拓扑：手机 Web 客户端 ↔ relay ↔ 本服务（role="device"）↔ WebRemoteHostBridge ↔ host。
 // - 配对：password=base64url(24B)，passHash=SHA-256(password) 持久化；QR 即 bearer 凭据。
 // - relay：每次连接 device_register_init 轮换 device_sid → auth 挑战应答 → pair_status 心跳。
-// - rpc-frame：shared 的 RpcFrameSender/Receiver 承载可靠传输；本服务只把重组后的
-//   字节原样写入 host MessagePort（协议与 renderer↔host 完全一致，含流控 sideband）。
+// - data 信封：控制面（bootstrap/workspace 列表/bridge open）+ rpc-frame 帧/ack/流控。
+//   桥身份（bridgeSessionId）由手机端铸造下发、HostBridge 采纳（官方语义）。
 // - relay 端点用 env 覆盖以支持自建：ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL / ZCODE_WEB_REMOTE_CONTROL_URL。
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
-import { MessageChannelMain, type MessagePortMain } from "electron";
-import { HostMessageTypes } from "@zcode/shared";
 import {
-  RpcFrameReceiver,
-  RpcFrameSender,
   WEB_REMOTE_HEARTBEAT_ACK_TIMEOUT_MS,
   WEB_REMOTE_HEARTBEAT_INTERVAL_MS,
   WEB_REMOTE_HEARTBEAT_JITTER_MS,
+  buildPairingQrUrl,
   computeRelayAuthProof,
   createPairingSecret,
-  buildPairingQrUrl,
   relayClientMessageSchema,
   relayServerMessageSchema,
-  rpcControlEnvelopeSchema,
-  rpcFrameAckSchema,
-  rpcFrameEnvelopeSchema,
   type RelayServerMessage,
 } from "@zcode/shared";
-import { MessagePortProtocol } from "@zcode/rpc";
-import { wrapElectronPort } from "../host/electronPort.js";
-import { loadPairingStore, savePairingStore, type PairingStore } from "./webRemoteControlStore.js";
+import { tryHandleControlPayload } from "./webRemoteControlControlPlane.js";
+import { WebRemoteHostBridge } from "./webRemoteControlHostBridge.js";
+import { loadPairingStore, savePairingStore } from "./webRemoteControlStore.js";
 
 const DEFAULT_REMOTE_URL = "https://zcode.z.ai/remote/v4";
 const DEFAULT_RELAY_WS_URL = "wss://zcode.z.ai/ws";
@@ -39,6 +32,8 @@ export interface WebRemoteControlServiceOptions {
   appVersion: string;
   /** 取当前（首个）窗口的 host 子进程；未启动时为 null。 */
   resolveHostChild: () => { postMessage(message: unknown, transfer?: unknown[]): void } | null;
+  /** 手机控制面 bootstrap/workspace-list 用的打开中 workspace 清单（main 维护）。 */
+  resolveWorkspaces: () => Array<{ workspacePath: string; workspaceIdentity?: string }>;
   log: (message: string, error?: unknown) => void;
   /** Electron WebSocket 全局（main 进程）。 */
   createWebSocket: (url: string) => WebSocketLike;
@@ -68,11 +63,6 @@ interface PairingStore {
   passHash: string;
 }
 
-const HOST_FLOW_TO_PHONE: Record<string, "saturated" | "drained"> = {
-  saturated: "saturated",
-  drained: "drained",
-};
-
 export class WebRemoteControlService {
   private state: WebRemoteControlState = "disabled";
   private socket: WebSocketLike | null = null;
@@ -81,16 +71,15 @@ export class WebRemoteControlService {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private heartbeatAckedAt = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
-  private bridgeSessionId = randomUUID();
-  private bridgeGeneration = 0;
-  private sender: RpcFrameSender | null = null;
-  private receiver: RpcFrameReceiver | null = null;
-  private hostPort: MessagePortMain | null = null;
-  private hostProtocol: MessagePortProtocol | null = null;
-  private disposers: Array<() => void> = [];
+  private readonly bridge: WebRemoteHostBridge;
 
   constructor(private readonly options: WebRemoteControlServiceOptions) {
     this.pairing = loadPairingStore(options.userDataDir);
+    this.bridge = new WebRemoteHostBridge({
+      resolveHostChild: options.resolveHostChild,
+      sendToRelay: (payload) => this.sendToRelay({ type: "data", payload }),
+      log: options.log,
+    });
   }
 
   getState(): WebRemoteControlState {
@@ -119,7 +108,7 @@ export class WebRemoteControlService {
   }
 
   stop(): void {
-    this.teardownBridge();
+    this.bridge.teardown();
     this.closeSocket();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
@@ -140,9 +129,7 @@ export class WebRemoteControlService {
   // ── relay 连接与认证 ──
 
   private relayWsUrl(): string {
-    return (
-      process.env.ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL?.trim() || DEFAULT_RELAY_WS_URL
-    );
+    return process.env.ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL?.trim() || DEFAULT_RELAY_WS_URL;
   }
 
   private remoteUrl(): string {
@@ -154,38 +141,7 @@ export class WebRemoteControlService {
     if (!pairing) return;
     this.closeSocket();
     this.state = this.state === "ready" ? "reconnecting" : this.state;
-    this.bridgeGeneration += 1;
-    this.bridgeSessionId = randomUUID();
-    this.sender = new RpcFrameSender({
-      bridgeSessionId: this.bridgeSessionId,
-      bridgeGeneration: this.bridgeGeneration,
-    });
-    this.receiver = new RpcFrameReceiver({
-      bridgeSessionId: this.bridgeSessionId,
-      bridgeGeneration: this.bridgeGeneration,
-    });
-    const disposers: Array<() => void> = [];
-    this.disposers = disposers;
-    disposers.push(
-      this.sender.onWire((payload) => this.sendToRelay({ type: "data", payload })),
-    );
-    disposers.push(
-      this.receiver.onWire((ack) => this.sendToRelay({ type: "data", payload: ack })),
-    );
-    disposers.push(
-      this.sender.onFault((fault, messageSeq) =>
-        this.options.log(`web-remote sender fault ${fault} messageSeq=${messageSeq}`),
-      ),
-    );
-    disposers.push(
-      this.receiver.onFault((fault, detail) =>
-        this.options.log(`web-remote receiver fault ${fault} ${detail}`),
-      ),
-    );
-    // 手机端流控 → host（MessagePort sideband）；host 流控 → 手机端。
-    disposers.push(
-      this.receiver.onPeerFlowState((state) => this.hostProtocol?.sendFlowState(state)),
-    );
+    // 桥身份由手机端 workspace-bridge-open 下发，重连后需重新 adopt。
 
     const socket = this.options.createWebSocket(this.relayWsUrl());
     this.socket = socket;
@@ -201,7 +157,7 @@ export class WebRemoteControlService {
     socket.addEventListener("message", (event) => this.onRelayMessage(event.data));
     socket.addEventListener("close", (event) => {
       this.options.log(`web-remote relay closed code=${event.code}`);
-      this.teardownBridge();
+      this.bridge.teardown();
       if (this.state !== "disabled") {
         this.state = "reconnecting";
         this.scheduleReconnect();
@@ -264,7 +220,6 @@ export class WebRemoteControlService {
           deviceName: hostnameSafe(),
           appVersion: this.options.appVersion,
         });
-        this.attachHostBridgeIfNeeded();
         this.startHeartbeat();
         this.options.log("web-remote relay ready");
         return;
@@ -275,7 +230,7 @@ export class WebRemoteControlService {
       }
       case "kicked": {
         this.options.log("web-remote kicked by relay");
-        this.teardownBridge();
+        this.bridge.teardown();
         this.state = "reconnecting";
         this.scheduleReconnect();
         return;
@@ -288,19 +243,21 @@ export class WebRemoteControlService {
   }
 
   private handleDataPayload(payload: unknown): void {
-    if (rpcFrameEnvelopeSchema.safeParse(payload).success) {
-      this.receiver?.feed(payload);
+    // 控制面请求优先于 rpc-frame 判别：两者都是 data 信封里的 JSON，靠 type 字段区分。
+    if (
+      tryHandleControlPayload(payload, {
+        appVersion: this.options.appVersion,
+        resolveWorkspaces: this.options.resolveWorkspaces,
+        send: (message) => this.sendToRelay(message),
+        ensureBridge: (bridgeSessionId) => {
+          this.bridge.adopt(bridgeSessionId);
+          this.bridge.attachIfNeeded();
+        },
+      })
+    ) {
       return;
     }
-    if (rpcFrameAckSchema.safeParse(payload).success) {
-      const ack = rpcFrameAckSchema.parse(payload);
-      this.sender?.acknowledge(ack.ackMessageSeq);
-      return;
-    }
-    if (rpcControlEnvelopeSchema.safeParse(payload).success) {
-      const control = rpcControlEnvelopeSchema.parse(payload);
-      this.receiver?.applyPeerFlowState(control.state);
-    }
+    this.bridge.handleFramePayload(payload);
   }
 
   private sendToRelay(message: unknown): void {
@@ -349,83 +306,7 @@ export class WebRemoteControlService {
     }, 3_000);
   }
 
-  // ── host 桥（AttachServicePort + rpc-frame ↔ MessagePort 双向搬运） ──
-
-  private attachHostBridgeIfNeeded(): void {
-    if (this.hostPort && this.hostProtocol) return;
-    const child = this.options.resolveHostChild();
-    if (!child) {
-      this.options.log("web-remote host bridge unavailable: no host process yet");
-      return;
-    }
-    const { port1, port2 } = new MessageChannelMain();
-    child.postMessage(
-      {
-        type: HostMessageTypes.AttachServicePort,
-        requestId: randomUUID(),
-        attachmentId: randomUUID(),
-        // web-remote-replayable：手机链路使用可重放交付档（与官方一致）。
-        clientMode: "web-remote-replayable",
-        scope: { kind: "local" },
-      },
-      [port2],
-    );
-    this.hostPort = port1;
-    const protocol = new MessagePortProtocol(wrapElectronPort(port1));
-    this.hostProtocol = protocol;
-    // host → 手机：MessagePort 原始字节进入可靠传输出站端。
-    this.disposers.push(
-      protocol.onMessage((buffer) => {
-        const result = this.sender?.send(buffer.buffer);
-        if (result && !result.ok) {
-          this.options.log(`web-remote outbound dropped: ${result.fault}`);
-        }
-      }),
-    );
-    // host 侧流控边沿 → 手机（control envelope 透传）。
-    this.disposers.push(
-      protocol.onFlowState((state) => {
-        const mapped = HOST_FLOW_TO_PHONE[state];
-        if (mapped) this.sendToRelay({ type: "data", payload: { __zcodeRpcControl: "connection-flow-v1", state: mapped } });
-      }),
-    );
-    // 手机 → host：重组后的字节按 MessagePort 线上格式（裸 Uint8Array）写入。
-    this.disposers.push(
-      this.receiver?.onMessage(({ bytes }) => {
-        // 拷出独立 ArrayBuffer：postMessage 转移/序列化不得共享 rpc-frame 底层缓冲。
-        const copy = new Uint8Array(bytes.byteLength);
-        copy.set(bytes);
-        port1.postMessage(copy);
-      }) ?? (() => {}),
-    );
-    port1.once("close", () => {
-      this.hostPort = null;
-      this.hostProtocol = null;
-    });
-  }
-
-  private teardownBridge(): void {
-    this.stopHeartbeat();
-    for (const dispose of this.disposers) dispose();
-    this.disposers = [];
-    this.sender = null;
-    this.receiver = null;
-    try {
-      this.hostProtocol?.disconnect();
-    } catch (error) {
-      this.options.log("web-remote host protocol dispose failed", error);
-    }
-    this.hostProtocol = null;
-    try {
-      this.hostPort?.close();
-    } catch {
-      // 已关闭
-    }
-    this.hostPort = null;
-  }
-
   private closeSocket(): void {
-    this.teardownBridge();
     const socket = this.socket;
     this.socket = null;
     if (!socket) return;
