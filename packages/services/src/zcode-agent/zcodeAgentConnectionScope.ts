@@ -5,6 +5,7 @@ import { Emitter, Event as RpcEvent, type Event, type IDisposable } from "@zcode
 import {
   V4_WIRE_PROTOCOL_VERSION,
   clientHelloSchema,
+  clientSupportsWorkflowRunDeltas,
   conversationTopic,
   sessionsIndexTopic,
   workspaceConfigTopic,
@@ -28,6 +29,11 @@ export interface ZCodeAgentV4ConnectionContext {
   connectionId: string;
   clientMode: ZCodeAgentV4ClientMode;
   role?: "terminal-client" | "trusted-host-relay";
+  /**
+   * 终端客户端在 clientHello 声明 workflowRunDeltas 后由握手写入；
+   * conversation 订阅据此透传给 CLI（workflowRuns 走按 run 增量编码）。
+   */
+  workflowRunDeltas?: boolean;
 }
 
 const TRUSTED_CONNECTION_FIELD = "__zcodeTrustedV4Connection";
@@ -92,6 +98,8 @@ function withTrustedConnection<T extends object>(
   delete forwarded["connectionId"];
   delete forwarded["clientMode"];
   delete forwarded["deliveryProfile"];
+  // 同 connectionId/clientMode：workflowRunDeltas 只能来自 hello 握手事实，不可由调用方伪造。
+  delete forwarded["workflowRunDeltas"];
   delete forwarded["subscriberScope"];
   forwarded[TRUSTED_CONNECTION_FIELD] = context;
   return forwarded as T;
@@ -207,6 +215,7 @@ function createHello(context: ZCodeAgentV4ConnectionContext): HelloMessage {
       compression: "none",
       workspaceHookReview: true,
       independentPlanState: true,
+      workflowRunDeltas: true,
     },
     auth: {},
   };
@@ -237,6 +246,8 @@ export function createZCodeAgentConnectionScope(
   let handshakeComplete = role === "trusted-host-relay";
   let helloIssued = role === "trusted-host-relay";
   let boundClientId: string | null = null;
+  // 终端 clientHello 声明 workflowRunDeltas 后置位；conversation 订阅据此透传。
+  let boundClientSupportsWorkflowRunDeltas = false;
   let commandQueryWorkspaceKey: string | null = null;
   let currentTransportFlowState: V4ConnectionFlowState = "drained";
   let flowClosed = false;
@@ -252,11 +263,18 @@ export function createZCodeAgentConnectionScope(
       return {
         connectionId: namespaceRelayConnectionId(context.connectionId, downstream.connectionId),
         clientMode: downstream.clientMode,
+        workflowRunDeltas:
+          downstream.workflowRunDeltas === true || boundClientSupportsWorkflowRunDeltas
+            ? true
+            : undefined,
       };
     }
     return {
       connectionId: context.connectionId,
       clientMode: context.clientMode,
+      ...(boundClientSupportsWorkflowRunDeltas || context.workflowRunDeltas === true
+        ? { workflowRunDeltas: true }
+        : {}),
     };
   };
 
@@ -659,6 +677,7 @@ export function createZCodeAgentConnectionScope(
         throw new Error("fault.connection.clientChanged");
       }
       boundClientId = parsed.clientId;
+      boundClientSupportsWorkflowRunDeltas = clientSupportsWorkflowRunDeltas(parsed);
       handshakeComplete = true;
     },
     async setConnectionFlowStateV4(params) {

@@ -6,6 +6,10 @@ import type { ConversationDelta } from "./delta.js";
 import type { ConversationSnapshot } from "./snapshot.js";
 import type { ConversationRow } from "./rows.js";
 import type { StreamablePath } from "./core.js";
+import {
+  applyWorkflowRunDeltaOp,
+  applyWorkflowRunRemovedOp,
+} from "./workflow-runs-delta.js";
 
 /**
  * 仅供服务端在未发布的候选快照内批量归约使用。
@@ -118,6 +122,17 @@ export function applyConversationDelta(
     case "state.updated":
       // 键级整体替换：patch 中在场的键覆盖，绝不深合并。
       return { ...snapshot, ...delta.patch };
+    case "workflowRun.updated":
+      // 按 run 增量（3.14.3）：归约本体在 workflow-runs-delta（diff/apply 同居一份）。
+      return {
+        ...snapshot,
+        workflowRuns: applyWorkflowRunDeltaOp(snapshot.workflowRuns, delta),
+      };
+    case "workflowRun.removed":
+      return {
+        ...snapshot,
+        workflowRuns: applyWorkflowRunRemovedOp(snapshot.workflowRuns, delta),
+      };
   }
 }
 
@@ -185,6 +200,13 @@ export function applyConversationDeltaMutable(
     case "state.updated":
       // 与不可变实现相同：patch 在场键整体替换，不能深合并。
       Object.assign(snapshot, delta.patch);
+      return;
+    case "workflowRun.updated":
+      snapshot.workflowRuns = applyWorkflowRunDeltaOp(snapshot.workflowRuns, delta);
+      return;
+    case "workflowRun.removed":
+      snapshot.workflowRuns = applyWorkflowRunRemovedOp(snapshot.workflowRuns, delta);
+      return;
   }
 }
 

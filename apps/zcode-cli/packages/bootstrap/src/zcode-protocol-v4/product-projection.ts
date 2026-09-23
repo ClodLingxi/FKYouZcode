@@ -115,6 +115,7 @@ import {
   applyConversationDeltas,
   applyConversationDeltasMutable,
   createMutableConversationSnapshotAccumulator,
+  diffWorkflowRunsState,
   reduceWorkflowRunsState,
   workspaceHookReviewRequestPayloadSchema,
 } from "@zcode/shared/zcode-protocol-v4";
@@ -3862,6 +3863,10 @@ export class ProductProjection {
             return true;
           }
           break;
+        case "workflowRun.updated":
+        case "workflowRun.removed":
+          // workflow run 运行态属于后台工作事实：与 backgroundWorks 同权判定。
+          return true;
         default: {
           const exhaustiveDelta: never = delta;
           return exhaustiveDelta;
@@ -4023,6 +4028,10 @@ export class ProductProjection {
           break;
         case "row.removed":
           if (prospective.rowId >= delta.fromRowId) prospective = null;
+          break;
+        case "workflowRun.updated":
+        case "workflowRun.removed":
+          // workflowRuns 增量不携带任何行，对本判定无影响。
           break;
         default: {
           const exhaustiveDelta: never = delta;
@@ -4308,7 +4317,9 @@ export class ProductProjection {
   //
   // 归约本体在 @zcode/shared 的 workflow-runs-reducer（与状态 schema 同居）：TUI 镜像要用
   // 同一份归约，两处各写一份就是两个时钟。
-  // 留在这里的只有投影的非纯部分——从事件信封取载荷、把新状态发成 state.updated。
+  // 留在这里的只有投影的非纯部分——从事件信封取载荷、把新状态发成增量。
+  // 3.14.3 对齐：delta 日志统一存 workflowRun.updated/removed 按 run 增量；
+  // 不支持增量的订阅在 publisher 编码边界折叠回 state.updated 整键替换。
   private onDynamicWorkflowRunProgress(event: SessionEvent): ConversationDelta[] {
     // 先转 contracts 的有界 payload、再赋给 shared 的结构化入参：这行赋值就是"两边形状不漂移"
     // 的编译期闸（shared 不得反向依赖 contracts，所以入参类型只能结构化定义）。
@@ -4317,7 +4328,7 @@ export class ProductProjection {
     const workflowRuns = reduceWorkflowRunsState(this.snapshot.workflowRuns, envelope);
     // null = 语义无变化（无效事件或同一条事件重放）：不产 delta，revision 不抬。
     if (workflowRuns === null) return [];
-    return [{ op: "state.updated", patch: { workflowRuns } }];
+    return diffWorkflowRunsState(this.snapshot.workflowRuns, workflowRuns);
   }
 
   private removeQueueItems(ids: readonly string[]): ConversationDelta[] {

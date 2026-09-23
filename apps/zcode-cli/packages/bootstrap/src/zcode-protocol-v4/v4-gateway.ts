@@ -1402,6 +1402,7 @@ export class ConversationV4Gateway {
       connectionId: params.connectionId,
       base: params.base,
       deliveryProfile: profileName,
+      workflowRunDeltas: params.workflowRunDeltas === true,
     });
     const routeKey = subscriptionRouteKey(
       params.topic,

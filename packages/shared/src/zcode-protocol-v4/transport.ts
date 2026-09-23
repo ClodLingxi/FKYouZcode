@@ -29,6 +29,8 @@ export const hostCapabilitiesSchema = z.object({
   // Wire-compatible：旧 Host 缺失等价于 false；调用方必须用 === true 判断。
   workspaceHookReview: z.boolean().optional(),
   independentPlanState: z.boolean().optional(),
+  // Host 作为 CLI 的客户端声明后，CLI 的 conversation delta 日志走 workflowRun.* 增量编码。
+  workflowRunDeltas: z.boolean().optional(),
 });
 export type HostCapabilities = z.infer<typeof hostCapabilitiesSchema>;
 
@@ -67,7 +69,15 @@ export const clientHelloSchema = z
     clientKind: z.enum(["desktop", "web", "mobileRemote", "mobileApp"]).optional(),
     appVersion: z.string(),
     // 缺失代表旧客户端，不具备 Settings-centered review UI。
-    capabilities: z.object({ workspaceHookReviewUi: z.boolean().optional() }).strict().optional(),
+    capabilities: z
+      .object({
+        workspaceHookReviewUi: z.boolean().optional(),
+        // 声明后 conversation 订阅按 run 增量接收 workflowRuns（workflowRun.updated/removed）；
+        // 未声明时编码边界降级为 state.updated 整键替换。
+        workflowRunDeltas: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type ClientHello = z.infer<typeof clientHelloSchema>;
@@ -78,6 +88,10 @@ export function hostSupportsWorkspaceHookReview(capabilities: HostCapabilities):
 
 export function clientSupportsWorkspaceHookReview(clientHello: ClientHello): boolean {
   return clientHello.capabilities?.workspaceHookReviewUi === true;
+}
+
+export function clientSupportsWorkflowRunDeltas(clientHello: ClientHello): boolean {
+  return clientHello.capabilities?.workflowRunDeltas === true;
 }
 
 // ── 订阅 ──
@@ -403,6 +417,8 @@ export const v4ConversationSubscribeParamsSchema = subscribeParamsSchema.extend(
   legacyTaskIds: z.array(z.string().min(1)).max(MAX_LEGACY_TASK_IDS_PER_SUBSCRIBE).optional(),
   // 仅供 host→CLI cold resume 使用；live conversation 不消费该 hint。
   resumeThoughtLevel: z.string().trim().min(1).optional(),
+  // 声明后 workflowRuns 走按 run 增量编码；缺省 = 旧客户端，编码边界降级 state.updated。
+  workflowRunDeltas: z.boolean().optional(),
 });
 export type V4ConversationSubscribeParams = z.infer<typeof v4ConversationSubscribeParamsSchema>;
 

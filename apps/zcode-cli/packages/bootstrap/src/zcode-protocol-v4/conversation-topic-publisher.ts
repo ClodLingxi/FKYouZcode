@@ -31,8 +31,11 @@ import {
   DELIVERY_PROFILES,
   PROTOCOL_V4_LIMITS,
   coalesceConversationDeltas,
+  encodeConversationDeltasForLegacy,
   filterConversationDeltasForProfile,
   filterConversationRowsForProfile,
+  isWorkflowRunDeltaOp,
+  trimWorkflowRunsForLegacyWire,
   utf8JsonByteLength,
 } from "@zcode/shared/zcode-protocol-v4";
 import {
@@ -88,6 +91,11 @@ interface Subscription {
   subscriptionId: string;
   connectionId: string;
   profile: DeliveryProfile;
+  /**
+   * 声明 workflowRunDeltas 的订阅按 run 增量接收 workflowRuns；
+   * 旧订阅在 delta 编码与 snapshot 边界降级为 state.updated 整键替换。
+   */
+  workflowRunDeltas: boolean;
   /** flush buffer：push 时已过 profile 过滤，flush 时 coalesce 打帧。 */
   buffer: ConversationDelta[];
   bufferBytes: number;
@@ -105,6 +113,8 @@ interface ConversationSubscribeParams {
   base?: { logEpoch: string; seq: number };
   /** 缺省 replayable（ws 默认；MessagePort 宿主显式传 continuous）。 */
   deliveryProfile?: DeliveryProfileName;
+  /** 缺省 false：workflowRuns 走旧 state.updated 编码。 */
+  workflowRunDeltas?: boolean;
 }
 
 interface ConversationSubscribeResult {
@@ -299,10 +309,20 @@ export class ConversationTopicPublisher {
   private getWireSnapshotForProfile(
     profile: DeliveryProfile,
     snapshot = this.projection.getSnapshot(),
+    options: { workflowRunDeltas?: boolean } = {},
   ): ConversationSnapshot {
     const visibleRows = filterConversationRowsForProfile(snapshot.rows.window, profile);
+    // 旧订阅的 wire snapshot 裁剪 workflowRuns（活动条目优先、置 truncated）；
+    // 增量订阅必须拿全量：per-run 增量的 removed 语义不允许静默裁剪。
+    const runsForWire =
+      options.workflowRunDeltas || snapshot.workflowRuns === undefined
+        ? snapshot.workflowRuns
+        : trimWorkflowRunsForLegacyWire(snapshot.workflowRuns);
     const visibleSnapshot: ConversationSnapshot = {
       ...snapshot,
+      ...(runsForWire === snapshot.workflowRuns
+        ? {}
+        : { workflowRuns: runsForWire }),
       rows: {
         ...snapshot.rows,
         window: visibleRows,
@@ -525,9 +545,13 @@ export class ConversationTopicPublisher {
       if (evicted) this.floorSeq = evicted.seq;
     }
     if (deltas.length === 0) return;
+    const currentWorkflowRuns = this.projection.getSnapshot().workflowRuns;
     for (const subscription of this.subscriptions.values()) {
       if (subscription.resyncRequired) continue;
-      const filtered = filterConversationDeltasForProfile(deltas, subscription.profile);
+      let filtered = filterConversationDeltasForProfile(deltas, subscription.profile);
+      if (!subscription.workflowRunDeltas) {
+        filtered = encodeConversationDeltasForLegacy(filtered, currentWorkflowRuns);
+      }
       const next = appendConversationSubscriberBuffer(subscription.buffer, filtered, {
         maxOps: this.subscriberBufferMaxOps,
         maxBytes: this.subscriberBufferMaxBytes,
@@ -636,6 +660,7 @@ export class ConversationTopicPublisher {
         const wireDeltas = deltas.filter((delta) => {
           if (delta.op === "state.updated" || delta.op === "row.appended") return true;
           if (delta.op === "row.removed") return false;
+          if (isWorkflowRunDeltaOp(delta)) return true;
           wireRowIds ??= new Set(
             snapshot.rows.window
               .slice(-PROTOCOL_V4_LIMITS.snapshotTailWindowRows)
@@ -708,10 +733,12 @@ export class ConversationTopicPublisher {
     if (previousId !== undefined) this.subscriptions.delete(previousId);
 
     const profile = DELIVERY_PROFILES[params.deliveryProfile ?? "replayable"];
+    const workflowRunDeltas = params.workflowRunDeltas === true;
     const subscription: Subscription = {
       subscriptionId: `sub-${this.logEpoch}-${this.nextSubscriptionSerial++}`,
       connectionId: params.connectionId,
       profile,
+      workflowRunDeltas,
       buffer: [],
       bufferBytes: 0,
       resyncRequired: false,
@@ -754,7 +781,10 @@ export class ConversationTopicPublisher {
           ...this.frameShell(subscription),
           fromSeq: 0,
           toSeq: this.currentSeq,
-          payload: { kind: "snapshot", snapshot: this.getWireSnapshotForProfile(profile) },
+          payload: {
+            kind: "snapshot",
+            snapshot: this.getWireSnapshotForProfile(profile, undefined, { workflowRunDeltas }),
+          },
         },
         false,
         "initial",
@@ -763,11 +793,14 @@ export class ConversationTopicPublisher {
     }
 
     // resume：保留窗内 (base.seq, current] 重放，与在线续流同一条 filter→coalesce 管线。
+    const replayDeltas = filterConversationDeltasForProfile(
+      this.log.flatMap((entry) => (entry.seq > base.seq ? entry.deltas : [])),
+      profile,
+    );
     const replay = coalesceConversationDeltas(
-      filterConversationDeltasForProfile(
-        this.log.flatMap((entry) => (entry.seq > base.seq ? entry.deltas : [])),
-        profile,
-      ),
+      workflowRunDeltas
+        ? replayDeltas
+        : encodeConversationDeltasForLegacy(replayDeltas, this.projection.getSnapshot().workflowRuns),
     );
     if (base.seq === this.currentSeq) {
       subscription.sentSeq = base.seq;

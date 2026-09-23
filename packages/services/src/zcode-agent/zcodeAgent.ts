@@ -351,6 +351,8 @@ export interface ZCodeAgentConversationSubscribeParams extends ZCodeAgentSession
   /** 水位不变量：仅当客户端真持有该时刻一致状态才允许带。 */
   base?: { logEpoch: string; seq: number };
   visibility?: "foreground" | "background";
+  /** 终端 hello 已声明 workflowRunDeltas 时由连接层写入并透传给 CLI。 */
+  workflowRunDeltas?: boolean;
 }
 
 export interface ZCodeAgentConversationUnsubscribeParams extends ZCodeAgentWorkspaceTarget {

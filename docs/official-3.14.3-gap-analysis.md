@@ -25,6 +25,16 @@
      `BigModelCodingPlanSubscriptionProvider.getManualClaimPlanPreviews/claimManualPlan` →
      `ICodingPlanSubscriptionService` 接口与委托。
 2. **版本号** 3.14.1 → 3.14.3。
+3. **Workflow 运行增量流协议（3.14.3 新增，完整同步）**：
+   - 新增 conversation delta ops：`workflowRun.updated`（runId/revision + run partial patch +
+     cleared/removedActors/removedNodes/actors/nodes identity diff）与 `workflowRun.removed`；
+   - 能力协商：clientHello `capabilities.workflowRunDeltas`（`clientSupportsWorkflowRunDeltas`）、
+     host→CLI hello 能力位、订阅参数 `workflowRunDeltas` 全链路透传
+     （连接 scope 握手写事实、trusted connection 防伪造、CLI gateway → publisher）；
+   - publisher 按订阅编码：增量订阅收 per-run ops；旧订阅在 ingest/resume/snapshot
+     三处边界折叠回 `state.updated`（`encodeConversationDeltasForLegacy`）并裁剪
+     snapshot workflowRuns（`trimWorkflowRunsForLegacyWire`，活动条目优先保序）；
+   - shared 新模块 `workflow-runs-delta.ts`：diff/apply/降级三面同居（round-trip 已验证）。
 
 ## 未同步差距（按规模排序，后续迭代方向）
 
@@ -34,7 +44,8 @@
    （`acquireBotRuntimeLock`、"An enabled bot with this provider user already exists." 等）。
    renderer 的新增社交图标即为此 UI 预留。需逆向 host bundle 中 bot runtime 状态机、
    渠道适配器与凭据存储，工程量大。
-2. **Relay 协议（host/main）**：`AcknowledgedRelayBatchQueue/Deadline/Protocol` 等中继批处理语义。
+2. **Relay 协议（host/main）**：`AcknowledgedRelayBatchQueue/Deadline/Protocol` 等中继批处理语义
+   （workflow 相关的 relay/delta 部分已于本次同步，剩余为非 workflow 的会话中继）。
 3. **CUA helper 安装校验（main，偏 macOS）**：
    `captureCuaHelperBundleAttestation` / `assertCuaHelperBundleAttestationUnchanged` /
    `assertSafeHelperDownloadUrl` / quarantine 清理等 helper bundle 完整性链路；Linux 影响有限。
