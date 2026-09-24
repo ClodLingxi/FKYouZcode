@@ -21,6 +21,9 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 
 const PORT = Number(process.env.PORT ?? 8787);
+// 默认只绑回环：relay 总是置于 TLS 反代或 ssh 反向隧道之后（它们都连 127.0.0.1），
+// 裸暴露到局域网/公网没有意义。需要直连监听时显式 HOST=0.0.0.0 覆盖。
+const HOST = process.env.HOST?.trim() || "127.0.0.1";
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 
 const CLOSE = {
@@ -109,8 +112,8 @@ function setPeer(entry, role, socket) {
 
 const httpServer = createServer((req, res) => serveStatic(new URL(req.url ?? "/", "http://x").pathname, res));
 const wss = new WebSocketServer({ server: httpServer, path: "/ws", maxPayload: MAX_MESSAGE_BYTES });
-httpServer.listen(PORT, () => {
-  console.log(`[web-remote-relay] listening on :${PORT} (ws path /ws; client static: ${CLIENT_DIST})`);
+httpServer.listen(PORT, HOST, () => {
+  console.log(`[web-remote-relay] listening on ${HOST}:${PORT} (ws path /ws; client static: ${CLIENT_DIST})`);
 });
 
 wss.on("connection", (socket) => {

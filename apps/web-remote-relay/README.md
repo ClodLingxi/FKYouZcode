@@ -13,6 +13,13 @@ npm install
 PORT=8787 node server.mjs   # 纯 Node，无构建；无状态（重启后桌面侧重新配对即可）
 ```
 
+- 默认只绑 `127.0.0.1`（`HOST` env 覆盖）：relay 总是置于 TLS 反代或 ssh 反向隧道之后，
+  由它们连回环地址；要直连监听需显式 `HOST=0.0.0.0`。
+- 支持路径前缀发布（如 nginx `location /remote/ { proxy_pass http://127.0.0.1:8787/; }`
+  剥前缀转发）：手机客户端会从页面地址自动推导 WS 端点（`https://host/<base>/` →
+  `wss://host/<base>/ws`），无需为前缀改协议。WS 端点若在反代上豁免 basic auth，
+  安全由 relay 自身的 HMAC passHash 挑战应答兜底。
+
 生产建议置于 TLS 反代之后（客户端 relay 端点为 `wss://<host>/ws`）。
 
 ## 桌面侧指向自建 relay

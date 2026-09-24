@@ -101,7 +101,10 @@ async function boot(): Promise<void> {
     return;
   }
   render("连接 relay…");
-  const wsUrl = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
+  // relay 常经 nginx 路径前缀发布（https://host/<base>/）：页面资源是相对引用，
+  // WS 也要落在同一段前缀下（反代剥前缀后 relay 收到的仍是 /ws）。根路径部署时 base 为 "/"。
+  const basePath = window.location.pathname.replace(/[^/]*$/, "");
+  const wsUrl = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}${basePath}ws`;
   const relay = new RelaySession(
     wsUrl,
     { deviceSid: pairing.sid, passHash: pairing.hash, deviceName: pairing.name },
