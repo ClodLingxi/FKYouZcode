@@ -1928,6 +1928,9 @@ const enUS: Record<string, string> = {
   "settings.zcodeInteractionBehavior.option.queue": "Queue",
   "settings.zcodeInteractionBehavior.option.guide": "Guide",
   "settings.askUserQuestionAutoResolution": "Automatically continue questions",
+  "settings.permissionAutoResolution": "Auto-approve permissions",
+  "settings.permissionAutoResolutionDescription":
+    "When a permission prompt waits without interaction, it is automatically approved once on timeout. Any interaction inside the prompt pauses the countdown.",
   "settings.askUserQuestionAutoResolutionDescription":
     "When enabled, Agent questions automatically continue after 5 minutes without an answer. When disabled, current and future questions wait for your response.",
   "settings.modelIoFullRetention": "Keep complete model I/O",
@@ -5542,6 +5545,7 @@ const enUS: Record<string, string> = {
   "chat.elicitation.previousQuestion": "Previous question",
   "chat.elicitation.nextQuestion": "Next question",
   "chat.elicitation.countdownSeconds": "{seconds}s",
+  "chat.permission.autoApproveCountdown": "Auto-approve in {seconds}s",
   "chat.elicitation.expandQuestion": "Expand question",
   "chat.elicitation.collapseQuestion": "Collapse question",
   "chat.elicitation.expandDialog": "Expand question dialog",

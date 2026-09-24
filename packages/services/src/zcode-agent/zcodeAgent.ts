@@ -549,6 +549,8 @@ export type ZCodeAgentServiceEvent =
 
 export interface ZCodeAgentAppRuntimePreferences {
   askUserQuestionAutoResolutionEnabled: boolean;
+  /** 缺省 true：权限审核/提问无互动超时自动「同意/批准一次」。 */
+  permissionAutoResolutionEnabled?: boolean;
   modelIoFullRetentionEnabled?: boolean;
 }
 

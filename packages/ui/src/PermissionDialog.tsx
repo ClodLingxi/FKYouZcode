@@ -15,11 +15,15 @@ import {
   type ZCodePermissionRequest,
   type ZCodeProvider,
 } from "@zcode/shared";
-import { MAX_PERMISSION_FEEDBACK_CHARS } from "@zcode/shared/zcode-protocol-v4";
+import {
+  MAX_PERMISSION_FEEDBACK_CHARS,
+  type InteractionAutoResolution,
+} from "@zcode/shared/zcode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { Textarea } from "@/components/ui/textarea.js";
 import { isImeComposingKeyEvent } from "@/lib/imeComposition.js";
+import { useInteractionCountdownSeconds } from "@/lib/interactionCountdown.js";
 import {
   getPermissionOptionDisplayKind,
   getPermissionRequestPreview,
@@ -426,6 +430,13 @@ function McpPermissionBlock(context: ToolCallBlockRenderContext) {
   );
 }
 
+export type PermissionAutoResolutionSnoozeSource =
+  | "panelHover"
+  | "option"
+  | "navigation"
+  | "feedback"
+  | "countdown";
+
 export function PermissionDialog({
   request,
   onRespond,
@@ -433,6 +444,8 @@ export function PermissionDialog({
   provider,
   responding = false,
   responseError,
+  autoResolution,
+  onFirstInteraction,
 }: {
   request: ZCodePermissionRequest;
   responding?: boolean;
@@ -440,6 +453,12 @@ export function PermissionDialog({
   onRespond: (requestId: string, option: ZCodePermissionOption, feedback?: string) => void;
   workspacePath: string;
   provider?: ZCodeProvider;
+  /** 无互动超时自动「批准一次」的权威状态；undefined = 该请求不计时。 */
+  autoResolution?: InteractionAutoResolution;
+  /** 用户首次主动交互时上报暂停计时；返回 false 表示未送达，允许下一次交互重试。 */
+  onFirstInteraction?: (
+    source: PermissionAutoResolutionSnoozeSource,
+  ) => boolean | void | Promise<boolean | void>;
 }) {
   const { intl } = useZCodeIntl();
   // store 耦合剥离：主题/代码预览设置在宿主处取 store，向下走 props/render context。
@@ -491,6 +510,20 @@ export function PermissionDialog({
     [blockKind, codePreviewSettings, intl, rawFileSummaries, theme, toolCall, workspacePath],
   );
   const displayReason = useMemo(() => getPermissionDisplayReason(request), [request]);
+  const countdownSeconds = useInteractionCountdownSeconds(autoResolution);
+  // 「用户在跟前」的上报闸：与 ElicitationDialog 同语义——首次主动交互暂停自动批准；
+  // 挂载时的自动聚焦不算（它不经过这些 handler），避免弹窗一出现倒计时就被误停。
+  const reportFirstInteraction = useCallback(
+    (source: PermissionAutoResolutionSnoozeSource) => {
+      if (autoResolution === undefined || autoResolution.state === "snoozed") return;
+      try {
+        onFirstInteraction?.(source);
+      } catch {
+        // 上报失败不影响正常交互路径。
+      }
+    },
+    [autoResolution, onFirstInteraction],
+  );
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [feedback, setFeedback] = useState("");
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -548,12 +581,13 @@ export function PermissionDialog({
         return;
       }
 
+      reportFirstInteraction("navigation");
       feedbackInputFocusedRef.current = false;
       setSelectedIndex(
         (currentIndex) => (currentIndex + direction + selectableCount) % selectableCount,
       );
     },
-    [selectableCount],
+    [reportFirstInteraction, selectableCount],
   );
 
   const respondWithOption = useCallback(
@@ -691,7 +725,10 @@ export function PermissionDialog({
   const shouldUseSaveWorkflowBlock = blockKind === "saveWorkflow";
   return (
     <div className="w-full shrink-0 relative z-1">
-      <div className="w-full overflow-hidden rounded-2xl border border-border bg-popover shadow-xs">
+      <div
+        className="w-full overflow-hidden rounded-2xl border border-border bg-popover shadow-xs"
+        onMouseEnter={() => reportFirstInteraction("panelHover")}
+      >
         <div className="flex flex-col gap-3 p-3">
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -699,6 +736,21 @@ export function PermissionDialog({
                 {intl.formatMessage({ id: "chat.permission.title" })}
               </p>
               <InteractionRequestOriginBadge origin={request.origin} />
+              {countdownSeconds !== null ? (
+                <span
+                  className="ml-auto shrink-0 rounded-md border border-border px-1.5 py-0.5 text-ui-sm tabular-nums text-foreground-subtle"
+                  data-permission-countdown-seconds={countdownSeconds}
+                  title={intl.formatMessage(
+                    { id: "chat.permission.autoApproveCountdown" },
+                    { seconds: String(countdownSeconds) },
+                  )}
+                >
+                  {intl.formatMessage(
+                    { id: "chat.elicitation.countdownSeconds" },
+                    { seconds: String(countdownSeconds) },
+                  )}
+                </span>
+              ) : null}
             </div>
             {!shouldUseSwitchModePlaceholder &&
             !shouldUseWorkflowBlock &&
@@ -792,6 +844,7 @@ export function PermissionDialog({
                       if (isSelected) {
                         respondWithOption(option);
                       } else {
+                        reportFirstInteraction("option");
                         setSelectedIndex(index);
                       }
                     }}
@@ -868,6 +921,7 @@ export function PermissionDialog({
                   data-permission-feedback-option={feedbackOption.optionId}
                   onFocus={() => {
                     feedbackInputFocusedRef.current = true;
+                    reportFirstInteraction("feedback");
                     setSelectedIndex(feedbackIndex);
                   }}
                   onBlur={() => {

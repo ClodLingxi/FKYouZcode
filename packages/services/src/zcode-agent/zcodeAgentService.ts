@@ -1465,6 +1465,8 @@ export function createZCodeAgentService(
             preferences: {
               askUserQuestionAutoResolutionEnabled:
                 params.preferences.askUserQuestionAutoResolutionEnabled,
+              permissionAutoResolutionEnabled:
+                params.preferences.permissionAutoResolutionEnabled !== false,
             },
           },
           zcodeWorkspaceUpdateInteractionPreferencesResultSchema,

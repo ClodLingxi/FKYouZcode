@@ -248,6 +248,7 @@ export class ZCodeProtocolAgentServer {
       logger: this.logger,
       appRuntimePreferences: {
         askUserQuestionAutoResolutionEnabled: true,
+        permissionAutoResolutionEnabled: true,
         modelIoFullRetentionEnabled: false,
         offPeakToolEnabled: false,
         // 动态工作流灰度门 fail-closed：Host 必须显式 workspace/updateDynamicWorkflowPolicy

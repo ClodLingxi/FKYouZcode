@@ -98,7 +98,7 @@ async function requestPermission(
         : response;
     },
     {
-      ...createInteractionRegistrationOptions(request, "other"),
+      ...(await createPermissionRegistrationOptions(context, request)),
       ...(!request.origin &&
       !request.optionsPolicy &&
       options?.claimResponse &&
@@ -296,7 +296,7 @@ async function requestExitPlanModeApproval(
     // v4 答 plan approval：allow 类 optionId = 批准；freeText = 计划反馈
     // （planApprovalResponseToBrokerResult 走 plan_approval_feedback deny）；否则 decline。
     (answer) => v4AnswerToPlanApprovalResponse(answer),
-    createInteractionRegistrationOptions(request, "other"),
+    await createPermissionRegistrationOptions(context, request),
   );
 
   return planApprovalResponseToBrokerResult(response);
@@ -500,6 +500,30 @@ function normalizeAskUserQuestionAnswers(
   return Object.keys(answers).length > 0 ? answers : undefined;
 }
 
+/**
+ * 权限审核（工具批准 / workflow 运行确认 / 计划批准）与 AskUserQuestion 共用同一套
+ * 「无互动超时自动结束」机制，但走独立 gate：默认超时自动「批准一次」。
+ * 注册为计时 kind 后，registry 负责计时/持久化事件；这里只负责恢复历史倒计时。
+ */
+async function createPermissionRegistrationOptions(
+  context: ZCodeProtocolAgentServerContext,
+  request: PermissionBrokerRequest,
+): Promise<V4InteractionRegistrationOptions> {
+  const initialAutoResolution = await readPersistedAutoResolution(context, request);
+  return createInteractionRegistrationOptions(
+    request,
+    "permission",
+    context,
+    initialAutoResolution,
+  );
+}
+
+function isTimedInteractionRegistrationKind(
+  kind: V4InteractionRegistrationOptions["kind"],
+): kind is "askUserQuestion" | "permission" {
+  return kind === "askUserQuestion" || kind === "permission";
+}
+
 function createInteractionRegistrationOptions(
   request: PermissionBrokerRequest,
   kind: V4InteractionRegistrationOptions["kind"],
@@ -510,7 +534,7 @@ function createInteractionRegistrationOptions(
     sessionId: String(request.sessionId),
     kind,
     ...(initialAutoResolution ? { initialAutoResolution } : {}),
-    ...(kind === "askUserQuestion" && context
+    ...(isTimedInteractionRegistrationKind(kind) && context
       ? {
           onAutoResolutionUpdated: async (autoResolution) => {
             const record = context.sessions?.get(String(request.sessionId));

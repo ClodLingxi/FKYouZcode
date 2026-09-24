@@ -3214,6 +3214,7 @@ async function requestSessionRuntimePreferences(
       // 增强搜索维持原有默认开启，其他协议/传输错误仍阻止 runtime 创建。
       return {
         askUserQuestionAutoResolutionEnabled: true,
+        permissionAutoResolutionEnabled: true,
         memoryEnabled: false,
         modelContextBudgetStrategy: DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
         nativeSearchEnhancementsEnabled: true,
@@ -3248,6 +3249,9 @@ async function resolveSessionStartupPreferences(
   // 必须在 session runtime 可发出第一次提问前应用；关闭路径会等待已有 snooze 持久化完成。
   await context.v4Interactions.initializeAskUserQuestionAutoResolutionEnabled(
     runtimePreferences.askUserQuestionAutoResolutionEnabled,
+  );
+  await context.v4Interactions.initializePermissionAutoResolutionEnabled(
+    runtimePreferences.permissionAutoResolutionEnabled,
   );
   return {
     memoryEnabled: runtimePreferences.memoryEnabled,

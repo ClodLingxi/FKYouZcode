@@ -144,12 +144,16 @@ export function useSettings() {
       await refresh();
       if (
         typeof patch.askUserQuestionAutoResolutionEnabled === "boolean" ||
+        typeof patch.permissionAutoResolutionEnabled === "boolean" ||
         typeof patch.modelIoFullRetentionEnabled === "boolean"
       ) {
         const preferences = {
           askUserQuestionAutoResolutionEnabled:
             patch.askUserQuestionAutoResolutionEnabled ??
             settingsStore.snapshot.settings?.askUserQuestionAutoResolutionEnabled !== false,
+          permissionAutoResolutionEnabled:
+            patch.permissionAutoResolutionEnabled ??
+            settingsStore.snapshot.settings?.permissionAutoResolutionEnabled !== false,
           modelIoFullRetentionEnabled:
             patch.modelIoFullRetentionEnabled ??
             settingsStore.snapshot.settings?.modelIoFullRetentionEnabled === true,

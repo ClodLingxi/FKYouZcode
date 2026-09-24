@@ -3289,7 +3289,10 @@ export class ProductProjection {
     const pendingInteractions = this.snapshot.pendingInteractions.map((interaction) => {
       if (
         interaction.interactionId !== payload.interactionId ||
-        interaction.payload.kind !== "userInput"
+        // 权限审核与 AskUserQuestion 共用同一 autoResolution durable 事件；
+        // workspaceHookReview 无计时资格，schema 侧也拒绝该字段。
+        (interaction.payload.kind !== "userInput" &&
+          interaction.payload.kind !== "permission")
       ) {
         return interaction;
       }

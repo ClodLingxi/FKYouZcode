@@ -1818,6 +1818,9 @@ const zhCN: Record<string, string> = {
   "settings.zcodeInteractionBehavior.option.queue": "队列",
   "settings.zcodeInteractionBehavior.option.guide": "引导",
   "settings.askUserQuestionAutoResolution": "提问自动继续",
+  "settings.permissionAutoResolution": "权限自动批准",
+  "settings.permissionAutoResolutionDescription":
+    "权限审核弹窗等待期间无互动时，超时后自动「批准一次」。点击弹窗内任意选项即暂停本次计时。",
   "settings.askUserQuestionAutoResolutionDescription":
     "开启后，Agent 提问 5 分钟未回答会自动继续；关闭后，当前和后续提问会一直等待你的回答。",
   "settings.modelIoFullRetention": "完整保留模型 I/O",
@@ -5321,6 +5324,7 @@ const zhCN: Record<string, string> = {
   "chat.elicitation.previousQuestion": "上一题",
   "chat.elicitation.nextQuestion": "下一题",
   "chat.elicitation.countdownSeconds": "{seconds}秒",
+  "chat.permission.autoApproveCountdown": "{seconds}秒后自动批准",
   "chat.elicitation.expandQuestion": "展开问题",
   "chat.elicitation.collapseQuestion": "收起问题",
   "chat.elicitation.expandDialog": "展开问题弹窗",

@@ -29,6 +29,25 @@ export type V4InteractionAnswer = {
 
 const ASK_USER_QUESTION_HIDDEN_GRACE_MS = 60_000;
 const ASK_USER_QUESTION_AUTO_RESOLUTION_MS = 300_000;
+
+type TimedInteractionKind = "askUserQuestion" | "permission";
+
+function isTimedInteractionKind(kind: V4InteractionRegistrationOptions["kind"] | undefined): kind is TimedInteractionKind {
+  return kind === "askUserQuestion" || kind === "permission";
+}
+
+/**
+ * 超时自动结束的应答按交互 kind 收口：
+ * - askUserQuestion：空 answers 的 accept 是 runtime「自动继续」的显式成功语义；
+ * - permission：allowOnce 让 v4AnswerToPermissionResponse 落「批准一次」，
+ *   与用户点第一个允许选项等价（永远不合成 allowAlways / 会话免确认规则）。
+ */
+function timeoutAnswerFor(kind: V4InteractionRegistrationOptions["kind"] | undefined): V4InteractionAnswer {
+  return kind === "permission"
+    ? { optionId: "allowOnce" }
+    : { action: "accept", content: { answers: {} } };
+}
+
 interface V4InteractionRegistryOptions {
   hiddenGraceMs?: number;
   autoResolutionMs?: number;
@@ -66,7 +85,7 @@ export type V4InteractionAutoResolution =
 
 export interface V4InteractionRegistrationOptions {
   sessionId: string;
-  kind: "askUserQuestion" | "other";
+  kind: "askUserQuestion" | "permission" | "other";
   fullAccess?: () => Promise<void>;
   initialAutoResolution?: V4InteractionAutoResolution;
   onAutoResolutionUpdated?: (state: V4InteractionAutoResolution) => void | Promise<void>;
@@ -94,6 +113,7 @@ export class V4InteractionRegistry {
   private readonly autoResolutionMs: number;
   private readonly now: () => number;
   private askUserQuestionAutoResolutionEnabled = true;
+  private permissionAutoResolutionEnabled = true;
   private interactionPreferenceCommandApplied = false;
 
   constructor(options: V4InteractionRegistryOptions = {}) {
@@ -123,7 +143,11 @@ export class V4InteractionRegistry {
       token,
       autoResolutionEligible:
         previous?.autoResolutionEligible ??
-        (options?.kind === "askUserQuestion" ? this.askUserQuestionAutoResolutionEnabled : false),
+        (options?.kind === "askUserQuestion"
+          ? this.askUserQuestionAutoResolutionEnabled
+          : options?.kind === "permission"
+            ? this.permissionAutoResolutionEnabled
+            : false),
       ...(previous?.autoResolution || options?.initialAutoResolution
         ? { autoResolution: previous?.autoResolution ?? options?.initialAutoResolution }
         : {}),
@@ -136,7 +160,7 @@ export class V4InteractionRegistry {
     }
     if (options) {
       if (entry.autoResolution) {
-        if (options.kind === "askUserQuestion" && !entry.autoResolutionEligible) {
+        if (isTimedInteractionKind(options.kind) && !entry.autoResolutionEligible) {
           void this.convertToSnoozed(entry);
         } else {
           this.resumeAutoResolution(interactionId, entry);
@@ -190,12 +214,12 @@ export class V4InteractionRegistry {
     }
   }
 
-  /** 首次有效操作永久暂停当前 AskUserQuestion 的自动结束；重复/迟到调用为 noop。 */
+  /** 首次有效操作永久暂停当前 AskUserQuestion / 权限审核的自动结束；重复/迟到调用为 noop。 */
   async snoozeAutoResolution(interactionId: string): Promise<boolean> {
     const entry = this.pending.get(interactionId);
     if (
       !entry?.options ||
-      entry.options.kind !== "askUserQuestion" ||
+      !isTimedInteractionKind(entry.options.kind) ||
       !entry.autoResolution ||
       entry.autoResolution.state === "snoozed"
     ) {
@@ -211,7 +235,12 @@ export class V4InteractionRegistry {
    */
   async setAskUserQuestionAutoResolutionEnabled(enabled: boolean): Promise<number> {
     this.interactionPreferenceCommandApplied = true;
-    return this.applyAskUserQuestionAutoResolutionEnabled(enabled);
+    return this.applyAutoResolutionEnabled("askUserQuestion", enabled);
+  }
+
+  async setPermissionAutoResolutionEnabled(enabled: boolean): Promise<number> {
+    this.interactionPreferenceCommandApplied = true;
+    return this.applyAutoResolutionEnabled("permission", enabled);
   }
 
   /**
@@ -220,17 +249,29 @@ export class V4InteractionRegistry {
    */
   async initializeAskUserQuestionAutoResolutionEnabled(enabled: boolean): Promise<number> {
     if (this.interactionPreferenceCommandApplied) return 0;
-    return this.applyAskUserQuestionAutoResolutionEnabled(enabled);
+    return this.applyAutoResolutionEnabled("askUserQuestion", enabled);
   }
 
-  private async applyAskUserQuestionAutoResolutionEnabled(enabled: boolean): Promise<number> {
-    this.askUserQuestionAutoResolutionEnabled = enabled;
+  async initializePermissionAutoResolutionEnabled(enabled: boolean): Promise<number> {
+    if (this.interactionPreferenceCommandApplied) return 0;
+    return this.applyAutoResolutionEnabled("permission", enabled);
+  }
+
+  private async applyAutoResolutionEnabled(
+    kind: "askUserQuestion" | "permission",
+    enabled: boolean,
+  ): Promise<number> {
+    if (kind === "askUserQuestion") {
+      this.askUserQuestionAutoResolutionEnabled = enabled;
+    } else {
+      this.permissionAutoResolutionEnabled = enabled;
+    }
     if (enabled) return 0;
 
     const persistence: Promise<void>[] = [];
     let snoozedInteractionCount = 0;
     for (const entry of this.pending.values()) {
-      if (entry.options?.kind !== "askUserQuestion") continue;
+      if (entry.options?.kind !== kind) continue;
       entry.autoResolutionEligible = false;
       if (entry.autoResolution && entry.autoResolution.state !== "snoozed") {
         snoozedInteractionCount += 1;
@@ -260,7 +301,7 @@ export class V4InteractionRegistry {
     const entry = this.pending.get(interactionId);
     if (
       !entry?.options ||
-      entry.options.kind !== "askUserQuestion" ||
+      !isTimedInteractionKind(entry.options.kind) ||
       !entry.autoResolutionEligible ||
       entry.autoResolution
     ) {
@@ -293,10 +334,7 @@ export class V4InteractionRegistry {
     const now = this.now();
     if (now >= autoResolution.deadlineAt) {
       queueMicrotask(() => {
-        this.resolve(interactionId, {
-          action: "accept",
-          content: { answers: {} },
-        });
+        this.resolve(interactionId, timeoutAnswerFor(entry.options?.kind));
       });
       return;
     }
@@ -334,10 +372,7 @@ export class V4InteractionRegistry {
     }
     entry.deadlineTimer = setTimeout(
       () => {
-        this.resolve(interactionId, {
-          action: "accept",
-          content: { answers: {} },
-        });
+        this.resolve(interactionId, timeoutAnswerFor(entry.options?.kind));
       },
       Math.max(0, autoResolution.deadlineAt - now),
     );

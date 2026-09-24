@@ -312,6 +312,18 @@ export function V4InteractionDialogs({
         request={request}
         workspacePath={workspacePath}
         provider={provider}
+        autoResolution={pending.autoResolution}
+        onFirstInteraction={(source) => {
+          if (!loggedSnoozeSourceIdsRef.current.has(pending.interactionId)) {
+            loggedSnoozeSourceIdsRef.current.add(pending.interactionId);
+            logger.debug("[v4-interaction] 权限请求暂停自动批准", {
+              interactionId: pending.interactionId,
+              source,
+            });
+          }
+          autoResolutionIntentRef.current.markInteracted(pending.interactionId);
+          return sendSnoozeOnce(pending.interactionId, Boolean(pending.autoResolution));
+        }}
         responding={
           permissionResponse?.interactionId === pending.interactionId && permissionResponse.pending
         }

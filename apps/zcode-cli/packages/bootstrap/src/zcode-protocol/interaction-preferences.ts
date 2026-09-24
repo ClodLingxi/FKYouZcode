@@ -10,14 +10,20 @@ export async function updateInteractionPreferences(
   rawParams: unknown,
 ) {
   const params = parseParams(zcodeWorkspaceUpdateInteractionPreferencesParamsSchema, rawParams);
-  const enabled = params.preferences.askUserQuestionAutoResolutionEnabled;
-  context.appRuntimePreferences.askUserQuestionAutoResolutionEnabled = enabled;
+  const askEnabled = params.preferences.askUserQuestionAutoResolutionEnabled;
+  const permissionEnabled = params.preferences.permissionAutoResolutionEnabled;
+  context.appRuntimePreferences.askUserQuestionAutoResolutionEnabled = askEnabled;
+  context.appRuntimePreferences.permissionAutoResolutionEnabled = permissionEnabled;
   const snoozedInteractionCount =
-    await context.v4Interactions.setAskUserQuestionAutoResolutionEnabled(enabled);
+    await context.v4Interactions.setAskUserQuestionAutoResolutionEnabled(askEnabled);
+  const snoozedPermissionCount =
+    await context.v4Interactions.setPermissionAutoResolutionEnabled(permissionEnabled);
 
   return {
     workspace: params.workspace,
-    askUserQuestionAutoResolutionEnabled: enabled,
+    askUserQuestionAutoResolutionEnabled: askEnabled,
+    permissionAutoResolutionEnabled: permissionEnabled,
     snoozedInteractionCount,
+    snoozedPermissionCount,
   };
 }

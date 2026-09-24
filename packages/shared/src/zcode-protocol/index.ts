@@ -1704,6 +1704,8 @@ export const zcodeSessionRuntimePreferencesResultSchema = z
     nativeSearchEnhancementsEnabled: z.boolean(),
     memoryEnabled: z.boolean().default(false),
     askUserQuestionAutoResolutionEnabled: z.boolean().default(true),
+    // 兼容旧 Host：缺少字段时按当前默认策略（开启）解析。
+    permissionAutoResolutionEnabled: z.boolean().default(true),
     integratedTerminalShell: integratedTerminalShellSelectionSchema.optional(),
     // 兼容旧 Host：缺少字段时在协议解析边界使用当前默认策略。
     modelContextBudgetStrategy: zcodeModelContextBudgetStrategySchema.default(
@@ -2179,6 +2181,7 @@ export type ZCodeProviderUpdateAccountConfigResult = z.infer<
 export const zcodeInteractionPreferencesSchema = z
   .object({
     askUserQuestionAutoResolutionEnabled: z.boolean(),
+    permissionAutoResolutionEnabled: z.boolean(),
   })
   .strict();
 export type ZCodeInteractionPreferences = z.infer<typeof zcodeInteractionPreferencesSchema>;
@@ -2197,7 +2200,9 @@ export const zcodeWorkspaceUpdateInteractionPreferencesResultSchema = z
   .object({
     workspace: zcodeWorkspaceRefSchema,
     askUserQuestionAutoResolutionEnabled: z.boolean(),
+    permissionAutoResolutionEnabled: z.boolean(),
     snoozedInteractionCount: z.number().int().nonnegative(),
+    snoozedPermissionCount: z.number().int().nonnegative(),
   })
   .strict();
 export type ZCodeWorkspaceUpdateInteractionPreferencesResult = z.infer<

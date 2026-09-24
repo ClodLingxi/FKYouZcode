@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { Textarea } from "@/components/ui/textarea.js";
 import { InteractionRequestOriginBadge } from "@/InteractionRequestOriginBadge.js";
+import { useInteractionCountdownSeconds } from "@/lib/interactionCountdown.js";
 import { isImeComposingKeyEvent } from "@/lib/imeComposition.js";
 import type { ElicitationFormDraft } from "@/store/zcodeSessionStoreTypes.js";
 import { useZCodeIntl } from "./i18n/IntlProvider.js";
@@ -37,66 +38,7 @@ interface ElicitationDialogProps {
 
 type ElicitationAutoResolutionSnoozeSource = "panelHover" | "answer" | "navigation" | "countdown";
 
-const ELICITATION_FINAL_MINUTE_MS = 60_000;
 const PLAN_APPROVAL_APPROVE_VALUE = "approve";
-
-function getElicitationCountdownSeconds(
-  autoResolution: InteractionAutoResolution | undefined,
-  now: number,
-): number | null {
-  if (!autoResolution || autoResolution.state === "snoozed") return null;
-  const remainingMs = autoResolution.deadlineAt - now;
-  if (remainingMs <= 0 || remainingMs >= ELICITATION_FINAL_MINUTE_MS) return null;
-  return Math.max(1, Math.floor(remainingMs / 1_000));
-}
-
-function getElicitationCountdownRefreshDelay(
-  autoResolution: InteractionAutoResolution | undefined,
-  now: number,
-): number | null {
-  if (!autoResolution || autoResolution.state === "snoozed") return null;
-  const remainingMs = autoResolution.deadlineAt - now;
-  if (remainingMs <= 0) return null;
-  if (remainingMs >= ELICITATION_FINAL_MINUTE_MS) {
-    return remainingMs - (ELICITATION_FINAL_MINUTE_MS - 1);
-  }
-  const seconds = Math.max(1, Math.floor(remainingMs / 1_000));
-  if (seconds <= 1) return remainingMs;
-  return Math.max(1, remainingMs - (seconds * 1_000 - 1));
-}
-
-function useElicitationCountdownSeconds(autoResolution: InteractionAutoResolution | undefined) {
-  const [clockNow, setClockNow] = useState(Date.now);
-
-  useEffect(() => {
-    if (!autoResolution || autoResolution.state === "snoozed") return;
-    let timeoutId: number | undefined;
-    const schedule = () => {
-      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
-      const now = Date.now();
-      setClockNow(now);
-      if (document.visibilityState === "hidden") return;
-      const delay = getElicitationCountdownRefreshDelay(autoResolution, now);
-      if (delay !== null) {
-        timeoutId = window.setTimeout(schedule, delay);
-      }
-    };
-    schedule();
-    window.addEventListener("focus", schedule);
-    document.addEventListener("visibilitychange", schedule);
-    return () => {
-      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
-      window.removeEventListener("focus", schedule);
-      document.removeEventListener("visibilitychange", schedule);
-    };
-  }, [
-    autoResolution?.state,
-    autoResolution?.startedAt,
-    autoResolution?.state === "snoozed" ? autoResolution.snoozedAt : autoResolution?.deadlineAt,
-  ]);
-
-  return getElicitationCountdownSeconds(autoResolution, clockNow);
-}
 
 interface NormalizedElicitationQuestion extends ZCodeElicitationQuestion {
   key: string;
@@ -362,7 +304,7 @@ function ElicitationDialogContent({
   const cardRef = useRef<HTMLDivElement | null>(null);
   const customInputCompositionActiveRef = useRef(false);
   const firstInteractionReportedRef = useRef(false);
-  const countdownSeconds = useElicitationCountdownSeconds(autoResolution);
+  const countdownSeconds = useInteractionCountdownSeconds(autoResolution);
 
   useEffect(() => {
     onFormDraftChange?.(request.requestId, { questionIndex, drafts });

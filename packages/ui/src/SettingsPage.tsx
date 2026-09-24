@@ -683,6 +683,8 @@ export function SettingsPage({
   const nativeSearchEnhancementsEnabled = sharedSettings?.nativeSearchEnhancementsEnabled !== false;
   const askUserQuestionAutoResolutionEnabled =
     sharedSettings?.askUserQuestionAutoResolutionEnabled !== false;
+  const permissionAutoResolutionEnabled =
+    sharedSettings?.permissionAutoResolutionEnabled !== false;
   const modelIoFullRetentionEnabled = sharedSettings?.modelIoFullRetentionEnabled === true;
   const [dataBaseDir, setDataBaseDir] = useState("");
   const [terminalInheritSystemProfile, setTerminalInheritSystemProfile] = useState(true);
@@ -901,6 +903,21 @@ export function SettingsPage({
         action: "toggle_ask_user_auto_resolution",
         trigger: "switch",
         operation: () => updateSharedSettings({ askUserQuestionAutoResolutionEnabled: enabled }),
+        completed: {
+          resultSource: "shared_settings",
+          stateAfter: enabled ? "enabled" : "disabled",
+        },
+      });
+    },
+    [updateSharedSettings],
+  );
+  const handlePermissionAutoResolutionEnabledChange = useCallback(
+    async (enabled: boolean) => {
+      await runSettingsActionAsync({
+        featureId: "settings.conversation",
+        action: "toggle_permission_auto_resolution",
+        trigger: "switch",
+        operation: () => updateSharedSettings({ permissionAutoResolutionEnabled: enabled }),
         completed: {
           resultSource: "shared_settings",
           stateAfter: enabled ? "enabled" : "disabled",
@@ -1724,6 +1741,10 @@ export function SettingsPage({
                             zcodeInteractionBehavior={zcodeInteractionBehavior}
                             askUserQuestionAutoResolutionEnabled={
                               askUserQuestionAutoResolutionEnabled
+                            }
+                            permissionAutoResolutionEnabled={permissionAutoResolutionEnabled}
+                            onPermissionAutoResolutionEnabledChange={
+                              handlePermissionAutoResolutionEnabledChange
                             }
                             modelIoFullRetentionEnabled={modelIoFullRetentionEnabled}
                             onDataBaseDirChange={handleDataBaseDirChange}

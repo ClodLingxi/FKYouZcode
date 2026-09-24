@@ -308,6 +308,8 @@ function RootInner({
       .syncAppRuntimePreferences({
         askUserQuestionAutoResolutionEnabled:
           appSettings.askUserQuestionAutoResolutionEnabled !== false,
+        permissionAutoResolutionEnabled:
+          appSettings.permissionAutoResolutionEnabled !== false,
         modelIoFullRetentionEnabled: appSettings.modelIoFullRetentionEnabled === true,
       })
       .catch((error) => {
@@ -315,6 +317,7 @@ function RootInner({
       });
   }, [
     appSettings?.askUserQuestionAutoResolutionEnabled,
+    appSettings?.permissionAutoResolutionEnabled,
     appSettings?.modelIoFullRetentionEnabled,
     services.zcodeAgentService,
   ]);
