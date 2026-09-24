@@ -182,8 +182,11 @@ wss.on("connection", (socket) => {
     }
 
     // ③/④ 认证（device 注册后走 auth；remote 直接用 QR 的 sid+hash 走同一套挑战应答）。
+    // 官方现行手机前端（zcode.z.ai/remote/v4）以 role "terminal" 接入：映射到 remote 槽位，
+    // 并保留原始角色以选择应答风格（官方读 auth_ack.pair_status；3.14.3 自家客户端读 auth_ok）。
     if (message.type === "auth_init") {
-      const role = message.role === "remote" ? "remote" : "device";
+      const rawRole = typeof message.role === "string" ? message.role : "";
+      const role = rawRole === "remote" || rawRole === "terminal" ? "remote" : "device";
       const deviceSid = typeof message.device_sid === "string" ? message.device_sid : "";
       const entry = devices.get(deviceSid);
       if (!entry) {
@@ -198,6 +201,7 @@ wss.on("connection", (socket) => {
       }
       session.role = role;
       session.deviceSid = deviceSid;
+      socket._authRole = rawRole;
       setPeer(entry, role, socket);
       const nonce = randomBytes(24).toString("base64url");
       socket._authNonce = nonce;
@@ -211,7 +215,9 @@ wss.on("connection", (socket) => {
         ? computeProof({
             passHash: entry.passHash,
             nonce: socket._authNonce ?? "",
-            role: session.role,
+            // proof 公式含角色原文（`${nonce}|${role}|${sid}`）：必须用客户端使用的原始
+            // 角色串（terminal），不能用映射后的槽位名（remote），否则 HMAC 对不上。
+            role: socket._authRole || session.role,
             deviceSid: session.deviceSid,
           })
         : null;
@@ -221,7 +227,18 @@ wss.on("connection", (socket) => {
       }
       socket._authNonce = undefined;
       session.authenticated = true;
-      send(socket, { type: "auth_ok", server_ts: Date.now() });
+      const peer = peerOf(entry, session.role);
+      // 官方现行前端用枚举（matched/waiting）表达对端在线；自家 3.14.3 客户端走 auth_ok。
+      const peerOnline = Boolean(peer && peer.readyState === peer.OPEN);
+      if (socket._authRole === "terminal") {
+        send(socket, {
+          type: "auth_ack",
+          pair_status: peerOnline ? "matched" : "waiting",
+          server_ts: Date.now(),
+        });
+      } else {
+        send(socket, { type: "auth_ok", server_ts: Date.now() });
+      }
       return;
     }
 
@@ -233,9 +250,12 @@ wss.on("connection", (socket) => {
       }
       const entry = devices.get(session.deviceSid);
       const peer = entry ? peerOf(entry, session.role) : null;
+      const online = Boolean(peer && peer.readyState === peer.OPEN);
       send(socket, {
         type: "pair_status_ack",
-        paired: Boolean(peer && peer.readyState === peer.OPEN),
+        paired: online, // 自家 3.14.3 客户端读布尔 paired
+        // 官方现行前端读枚举 pair_status（matched=对端在线 / waiting=等待桌面端）
+        pair_status: online ? "matched" : "waiting",
         server_ts: Date.now(),
       });
       return;

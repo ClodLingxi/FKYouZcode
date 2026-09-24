@@ -17,7 +17,35 @@ PORT=8787 node server.mjs   # 纯 Node，无构建；无状态（重启后桌面
   由它们连回环地址；要直连监听需显式 `HOST=0.0.0.0`。
 - 支持路径前缀发布（如 nginx `location /remote/ { proxy_pass http://127.0.0.1:8787/; }`
   剥前缀转发）：手机客户端会从页面地址自动推导 WS 端点（`https://host/<base>/` →
-  `wss://host/<base>/ws`），无需为前缀改协议。WS 端点若在反代上豁免 basic auth，
+  `wss://host/<base>/ws`），无需为前缀改协议。
+
+行为验收：
+
+```bash
+node protocol-test.mjs ws://127.0.0.1:8787/ws          # 本机
+node protocol-test.mjs wss://host/prefix/ws            # 反代/隧道全链路（静态用例按前缀解析）
+```
+
+## 官方前端接入（zcode.z.ai/remote/v4 反代模式）
+
+官方现行手机前端可直接用作本 relay 的 UI：nginx 把 `/remote/v4`（HTML + `/remote/v4/latest/*`
+资产）实时反代到 zcode.z.ai，同时用 `sub_filter` 把它烘焙的 relay 端点
+`wss://zcode.z.ai/ws`（全 app 唯一常量 `Yd`，`Mae/B4t` 由此派生，`endpointOrigin`
+对非 chatglm 域不生效）改写为本域 `/ws`；sub_filter 不能处理压缩响应，需向源站要
+identity 再由 nginx 自行 gzip。桌面侧 QR 的 `ZCODE_WEB_REMOTE_CONTROL_URL` 指向本域
+`/remote/v4/`，控制链路（认证 + data 信封）即全程走自建 relay。
+
+配套的 relay 兼容层（本文件已实现）：
+
+- 官方前端以 `role:"terminal"` 接入（映射到 remote 槽位），proof 按原始角色串
+  `${nonce}|terminal|${sid}` 校验；
+- terminal 应答 `auth_ack{pair_status:"matched"|"waiting"}`（自家客户端仍收 `auth_ok`）；
+- `pair_status_ack` 双字段并写：`paired`（布尔，自家客户端）+ `pair_status`（枚举，官方前端）。
+
+注意：官方前端与官方 3.14.3 桌面端的控制面为 `zcode_type`/`requestId` + 驼峰
+result 结构；本仓库 `webRemoteControlControlPlane.ts` 目前仍是 `type`/`request_id`
+旧方言，故 `/remote/` 兜底前端只与「按本仓库构建的桌面端」配套，官方前端要配
+官方/同步版桌面端（桌面端原生新方言，relay 透明透传 data 信封，无需翻译）。WS 端点若在反代上豁免 basic auth，
   安全由 relay 自身的 HMAC passHash 挑战应答兜底。
 
 生产建议置于 TLS 反代之后（客户端 relay 端点为 `wss://<host>/ws`）。
