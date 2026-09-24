@@ -230,8 +230,9 @@ export async function resumeFromStore(
     session,
     traceContext,
   });
-  await this.discardPersistedPendingSteerInputs(traceContext);
-  const recoveredSteerInputCount = 0;
+  // 崩溃/重启后从账本恢复排队输入（重放 TurnSteerQueued），不再按旧裁决清空队列；
+  // backgroundNotification 类仍清扫留痕。恢复条数进 SessionResumed 供 UI/诊断观测。
+  const recoveredSteerInputCount = await this.restorePersistedPendingSteerInputs(traceContext);
   const resumedTodos = await this.readSessionTodosForContext(traceContext);
   const resumedTarget = await this.readSessionTargetForContext(traceContext);
   this.injectTargetStateIntoMessageHistory(resumedTarget);

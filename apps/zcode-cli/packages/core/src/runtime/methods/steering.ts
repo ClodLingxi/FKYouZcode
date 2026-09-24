@@ -23,6 +23,8 @@ import type {
   QueryId,
   SessionEvent,
   TraceContext,
+  TurnInputIntentMetadata,
+  TurnSteerCommandKind,
   TurnSteerInput,
   TurnSteerRejectReason,
   TurnSteerResult,
@@ -1328,76 +1330,181 @@ export async function discardPendingInput(
   });
 }
 
-export async function discardPersistedPendingSteerInputs(
+export async function restorePersistedPendingSteerInputs(
   this: AgentRuntimeInternal,
   traceContext: TraceContext,
 ): Promise<number> {
-  // （重启不保留队列）：先清扫账本残留 admitted——事件日志是
-  // 内存的，崩溃后投影里什么都没有，账本是唯一痕迹（含 background wake：后台
-  // 子进程随 CLI 重启已死，其未消费通知不可恢复）。留痕（discarded/session_resumed）
-  // 不静默，用户/诊断可查「这条输入去哪了」。
-  try {
-    const admitted =
-      (await this.sessionStore?.listSessionInputs?.({
-        sessionID: this.sessionId,
-        status: "admitted",
-      })) ?? [];
-    for (const record of admitted) {
-      await this.sessionStore?.settleSessionInput?.({
-        id: record.id,
-        sessionID: this.sessionId,
-        status: "discarded",
-        reason: "session_resumed",
+  // （崩溃恢复队列）：事件日志在内存、重启后投影为空，SQLite session_input 账本
+  // admitted 残留是排队输入的唯一 durable 痕迹。旧实现把它们清扫为
+  // discarded(session_resumed)——软件闪退后队列消息全部消失。现改为按
+  // admitted_sequence FIFO 逐条重放 TurnSteerQueued（同 id 幂等：账本 upsert
+  // 保序保状态、投影 reducer 同 id 原地更新），队列恢复进投影后由既有
+  // auto-drain 闸门继续消费。
+  // startNow 残留同样恢复：promotion 与 user message 落库同事务，status 仍是
+  // admitted 说明该输入从未写进 transcript，按 queue 重跑不会产生重复消息。
+  // 例外：backgroundNotification 的生产者（后台子进程）已随重启死亡，其通知
+  // 不可恢复，仍收口为 discarded(session_resumed) 留痕不静默。
+  let restoredCount = 0;
+  let sweptCount = 0;
+  const admitted =
+    (await this.sessionStore?.listSessionInputs?.({
+      sessionID: this.sessionId,
+      status: "admitted",
+    })) ?? [];
+  const targetTurnId: TurnId =
+    this.latestAssistantTurnId ?? traceContext.turnId ?? ("deferred" as TurnId);
+  for (const record of admitted) {
+    if (record.kind === "backgroundNotification" || !isRestorableInputKind(record.kind)) {
+      try {
+        await this.sessionStore?.settleSessionInput?.({
+          id: record.id,
+          sessionID: this.sessionId,
+          status: "discarded",
+          reason: "session_resumed",
+        });
+        sweptCount += 1;
+      } catch (error) {
+        this.logger?.warn("Failed to sweep admitted session input on resume", {
+          ...traceContextToLogContext(traceContext),
+          errorMessage: error instanceof Error ? error.message : String(error),
+          event: "session_input.resume_sweep_failed",
+          module: "core.runtime",
+          pendingInputId: record.id,
+          status: "failed",
+        });
+      }
+      continue;
+    }
+    const text = typeof record.payload.text === "string" ? record.payload.text : "";
+    const intent = parsePersistedInputIntent(record.payload.intent);
+    const commandKind = intent?.kind ?? (record.kind as TurnSteerCommandKind);
+    // startNow 残留按 queue 恢复：崩溃时它从未启动成 turn，排队重跑即原语义。
+    const restoredIntent = intent
+      ? {
+          ...intent,
+          admittedDelivery: intent.admittedDelivery === "guide" ? ("guide" as const) : ("queue" as const),
+          requestedDelivery: intent.requestedDelivery === "guide" ? ("guide" as const) : ("queue" as const),
+          ...(intent.queuePosition === undefined ? { queuePosition: restoredCount } : {}),
+        }
+      : undefined;
+    const delivery = record.delivery === "guide" ? ("guide" as const) : ("queue" as const);
+    try {
+      const event = createSessionEvent(
+        SessionEventType.TurnSteerQueued,
+        this.sessionId,
+        {
+          ...(restoredIntent?.sourceCommandId ? { inputId: restoredIntent.sourceCommandId } : {}),
+          pendingInputId: record.id,
+          input: text,
+          inputPreview: previewInput(text),
+          inputSize: measureUtf8Bytes(text),
+          ...(isSteerCommandKind(commandKind) ? { commandKind } : {}),
+          delivery,
+          ...(restoredIntent ? { intent: restoredIntent } : {}),
+          queueLength: restoredCount + 1,
+          targetTurnId,
+        },
+        {
+          traceId: traceContext.traceId,
+          turnId: targetTurnId,
+        },
+      );
+      await this.appendEvent(event, traceContext);
+      restoredCount += 1;
+    } catch (error) {
+      // 单条恢复失败不拖垮整个 resume；留 warn，账本行保持 admitted 可诊断。
+      this.logger?.warn("Failed to restore queued session input on resume", {
+        ...traceContextToLogContext(traceContext),
+        errorMessage: error instanceof Error ? error.message : String(error),
+        event: "session_input.resume_restore_failed",
+        module: "core.runtime",
+        pendingInputId: record.id,
+        status: "failed",
       });
     }
-  } catch (error) {
-    this.logger?.warn("Failed to sweep admitted session inputs on resume", {
-      ...traceContextToLogContext(traceContext),
-      errorMessage: error instanceof Error ? error.message : String(error),
-      event: "session_input.resume_sweep_failed",
-      module: "core.runtime",
-      status: "failed",
-    });
   }
-
-  const projection = await this.rebuildProjection();
-  const pendingInputs = projection.pendingSteerInputs;
-  if (pendingInputs.length === 0) return 0;
-
-  const pendingByTurn = new Map<TurnId, PendingSteerInputInfo[]>();
-  for (const pendingInput of pendingInputs) {
-    const group = pendingByTurn.get(pendingInput.targetTurnId) ?? [];
-    group.push(pendingInput);
-    pendingByTurn.set(pendingInput.targetTurnId, group);
-  }
-
-  for (const [targetTurnId, group] of pendingByTurn) {
-    const pendingInputIds = group.map((item) => item.pendingInputId);
-    const event = createSessionEvent(
-      SessionEventType.TurnSteerDiscarded,
-      this.sessionId,
-      {
-        pendingInputIds,
-        reason: "session_resumed",
-        targetTurnId,
-      },
-      {
-        traceId: traceContext.traceId,
-        turnId: targetTurnId,
-      },
-    );
-    await this.appendEvent(event, traceContext);
-    this.logger?.debug("Turn steer discarded", {
+  if (restoredCount > 0 || sweptCount > 0) {
+    this.logger?.info("Session steer inputs restored on resume", {
       ...traceContextToLogContext(traceContext),
-      discardedCount: group.length,
-      event: "turn.steer.discarded",
+      event: "session_input.resume_restore",
       module: "core.runtime",
-      pendingInputIds,
-      reason: "session_resumed",
+      restoredCount,
+      sweptCount,
       status: "completed",
-      targetTurnId,
     });
   }
+  return restoredCount;
+}
 
-  return pendingInputs.length;
+function isRestorableInputKind(kind: string): boolean {
+  return kind === "sendText" || kind === "sendGoalCommand" || kind === "compact";
+}
+
+function isSteerCommandKind(kind: TurnSteerCommandKind): boolean {
+  return kind === "sendText" || kind === "sendGoalCommand" || kind === "compact";
+}
+
+/**
+ * 账本 payload.intent 是 JSON 反序列化产物，缺字段/形状漂移时宁可不带 intent
+ * （退化为纯文本恢复，kind 用账本行兜底），也不能把坏形状注入事件流。
+ */
+function parsePersistedInputIntent(raw: unknown): TurnInputIntentMetadata | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const value = raw as Record<string, unknown>;
+  if (
+    typeof value.sourceCommandId !== "string" ||
+    typeof value.queueItemId !== "string" ||
+    typeof value.clientId !== "string" ||
+    typeof value.admissionSeq !== "number" ||
+    typeof value.admittedAt !== "number"
+  ) {
+    return undefined;
+  }
+  const requestedDelivery: TurnInputIntentMetadata["requestedDelivery"] =
+    value.requestedDelivery === "auto" ||
+    value.requestedDelivery === "startNow" ||
+    value.requestedDelivery === "queue" ||
+    value.requestedDelivery === "guide"
+      ? value.requestedDelivery
+      : "queue";
+  const admittedDelivery: TurnInputIntentMetadata["admittedDelivery"] =
+    value.admittedDelivery === "startNow" ||
+    value.admittedDelivery === "queue" ||
+    value.admittedDelivery === "guide"
+      ? value.admittedDelivery
+      : "queue";
+  const kind: TurnSteerCommandKind =
+    value.kind === "sendGoalCommand" || value.kind === "compact" ? value.kind : "sendText";
+  return {
+    sourceCommandId: value.sourceCommandId,
+    queueItemId: value.queueItemId,
+    clientId: value.clientId,
+    kind,
+    admissionSeq: value.admissionSeq,
+    admittedAt: value.admittedAt,
+    requestedDelivery,
+    admittedDelivery,
+    ...(typeof value.text === "string" ? { text: value.text } : {}),
+    ...(value.modelSelection && typeof value.modelSelection === "object"
+      ? { modelSelection: value.modelSelection as TurnInputIntentMetadata["modelSelection"] }
+      : {}),
+    ...(value.mode === "build" || value.mode === "edit" || value.mode === "plan" || value.mode === "yolo"
+      ? { mode: value.mode }
+      : {}),
+    ...(typeof value.queuePosition === "number" ? { queuePosition: value.queuePosition } : {}),
+    ...(typeof value.fallbackReasonCode === "string"
+      ? { fallbackReasonCode: value.fallbackReasonCode }
+      : {}),
+    ...(Array.isArray(value.attachmentRefs)
+      ? { attachmentRefs: value.attachmentRefs as TurnInputIntentMetadata["attachmentRefs"] }
+      : {}),
+    ...(Array.isArray(value.sharedContextRefs)
+      ? {
+          sharedContextRefs: value.sharedContextRefs as TurnInputIntentMetadata["sharedContextRefs"],
+        }
+      : {}),
+    ...(value.provenance && typeof value.provenance === "object"
+      ? { provenance: value.provenance as TurnInputIntentMetadata["provenance"] }
+      : {}),
+  };
 }

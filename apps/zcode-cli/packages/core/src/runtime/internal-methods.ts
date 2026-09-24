@@ -234,7 +234,8 @@ export interface AgentRuntimeCoreMethods {
     previousMode: CollaborationMode;
     traceContext: TraceContext;
   }): Promise<void>;
-  discardPersistedPendingSteerInputs(traceContext: TraceContext): Promise<number>;
+  /** 恢复（而非清空）账本残留的排队输入：重放 TurnSteerQueued，返回恢复条数。 */
+  restorePersistedPendingSteerInputs(traceContext: TraceContext): Promise<number>;
   /** held 项按 id 丢弃（held 回落）：active turn 结束后经投影定位补 TurnSteerDiscarded。 */
   discardHeldPendingInputById(
     pendingInputId: string,

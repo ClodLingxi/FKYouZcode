@@ -233,6 +233,7 @@ export type {
   TurnFileChangeSummary,
   TurnSteerInput,
   TurnInputIntentMetadata,
+  TurnSteerCommandKind,
   TurnExecutionKind,
   TurnSteerRejectReason,
   TurnSteerResult,
