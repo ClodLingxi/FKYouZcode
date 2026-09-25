@@ -1,7 +1,7 @@
 // relay 行为验收（对齐 README 行为清单 + 官方现行前端兼容层）。
 // 用法: node protocol-test.mjs <ws-url>
 //   例: node protocol-test.mjs ws://127.0.0.1:8787/ws
-//       node protocol-test.mjs wss://www.clodlingxi.cn:25565/remote/ws
+//       node protocol-test.mjs wss://your-host.example/remote/ws
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
