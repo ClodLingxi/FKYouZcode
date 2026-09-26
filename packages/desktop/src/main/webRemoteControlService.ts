@@ -13,12 +13,16 @@ import {
   WEB_REMOTE_HEARTBEAT_INTERVAL_MS,
   WEB_REMOTE_HEARTBEAT_JITTER_MS,
   buildPairingQrUrl,
-  computeRelayAuthProof,
-  createPairingSecret,
   relayClientMessageSchema,
   relayServerMessageSchema,
   type RelayServerMessage,
 } from "@zcode/shared";
+// 配对 proof 的 node:crypto 实现不走 root barrel：barrel 会被沙箱 preload 打包，
+// node 内置模块进 preload 即崩（见 shared/src/index.ts 的 pairingCryptoNode 注释）。
+import {
+  computeRelayAuthProof,
+  createPairingSecret,
+} from "@zcode/shared/web-remote-control-node";
 import { tryHandleControlPayload } from "./webRemoteControlControlPlane.js";
 import { WebRemoteHostBridge } from "./webRemoteControlHostBridge.js";
 import { loadPairingStore, savePairingStore } from "./webRemoteControlStore.js";
