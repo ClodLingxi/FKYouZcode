@@ -2553,15 +2553,6 @@ export class ConversationV4Gateway {
     return item ?? null;
   }
 
-  hasQueueItemKind(sessionId: string, kind: QueueItem["kind"]): boolean {
-    return Boolean(
-      this.publishers
-        .get(sessionId)
-        ?.getSnapshot()
-        .queue.items.some((candidate) => candidate.kind === kind),
-    );
-  }
-
   hasQueuedDelivery(sessionId: string, delivery: "guide" | "queue"): boolean {
     return Boolean(
       this.publishers

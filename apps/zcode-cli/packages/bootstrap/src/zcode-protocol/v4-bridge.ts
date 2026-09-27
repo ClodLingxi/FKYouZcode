@@ -701,8 +701,6 @@ export function createConversationV4Gateway(
     // 返回值回填），这里惰性取用避免构造期自引用。
     getQueueItem: (sessionId, queueItemId) =>
       context.v4Gateway?.getQueueItem(sessionId, queueItemId) ?? null,
-    hasQueueItemKind: (sessionId, kind) =>
-      context.v4Gateway?.hasQueueItemKind(sessionId, kind) ?? false,
     hasQueuedDelivery: (sessionId, delivery) =>
       context.v4Gateway?.hasQueuedDelivery(sessionId, delivery) ?? false,
     getQueueLength: (sessionId) => context.v4Gateway?.getQueueLength(sessionId) ?? 0,

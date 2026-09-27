@@ -82,8 +82,6 @@ export interface V4CommandCoreHost {
   // ── v4 原生能力（非过渡钩子）────────────────────────────────
   /** queue 项完整权威 intent；sendQueuedNow 禁止退化成 text-only 重发。 */
   getQueueItem?(sessionId: string, queueItemId: string): V4QueueItemCommand | null;
-  /** typed maintenance 命令去重；判据来自同一 projection queue，不维护旁路集合。 */
-  hasQueueItemKind?(sessionId: string, kind: QueueItem["kind"]): boolean;
   /** guide eligibility：只阻止已有 ordinary queue；已有 guide 仍允许继续按 FIFO admission。 */
   hasQueuedDelivery?(sessionId: string, delivery: "guide" | "queue"): boolean;
   getQueueLength?(sessionId: string): number;

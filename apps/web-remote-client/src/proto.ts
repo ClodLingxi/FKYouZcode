@@ -1,23 +1,15 @@
 // 浏览器端原语：base64 / base64url / WebCrypto HMAC proof / uuidv7 / 稳定 clientId。
 // 与 Node 侧 pairingCryptoNode.ts 的算法逐字节对齐（回归口径 = WEB_REMOTE_AUTH_TEST_VECTOR）。
+import {
+  webRemoteBase64ToBytes,
+  webRemoteBytesToBase64,
+} from "../../../packages/shared/src/web-remote-control/base64.js";
 
 const textEncoder = new TextEncoder();
 
-export function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const chunk = 0x8000;
-  for (let offset = 0; offset < bytes.length; offset += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunk));
-  }
-  return btoa(binary);
-}
-
-export function base64ToBytes(value: string): Uint8Array {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes;
-}
+// base64 编解码复用 shared 同构实现（与桌面端共用一套，勿在本模块再抄一份）。
+const bytesToBase64 = webRemoteBytesToBase64;
+const base64ToBytes = webRemoteBase64ToBytes;
 
 export function bytesToBase64Url(bytes: Uint8Array): string {
   return bytesToBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");

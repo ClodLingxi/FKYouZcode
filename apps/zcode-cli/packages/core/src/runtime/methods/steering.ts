@@ -1354,7 +1354,7 @@ export async function restorePersistedPendingSteerInputs(
   const targetTurnId: TurnId =
     this.latestAssistantTurnId ?? traceContext.turnId ?? ("deferred" as TurnId);
   for (const record of admitted) {
-    if (record.kind === "backgroundNotification" || !isRestorableInputKind(record.kind)) {
+    if (record.kind === "backgroundNotification" || !isRestorableSteerKind(record.kind)) {
       try {
         await this.sessionStore?.settleSessionInput?.({
           id: record.id,
@@ -1398,7 +1398,7 @@ export async function restorePersistedPendingSteerInputs(
           input: text,
           inputPreview: previewInput(text),
           inputSize: measureUtf8Bytes(text),
-          ...(isSteerCommandKind(commandKind) ? { commandKind } : {}),
+          ...(isRestorableSteerKind(commandKind) ? { commandKind } : {}),
           delivery,
           ...(restoredIntent ? { intent: restoredIntent } : {}),
           queueLength: restoredCount + 1,
@@ -1436,11 +1436,11 @@ export async function restorePersistedPendingSteerInputs(
   return restoredCount;
 }
 
-function isRestorableInputKind(kind: string): boolean {
-  return kind === "sendText" || kind === "sendGoalCommand" || kind === "compact";
-}
-
-function isSteerCommandKind(kind: TurnSteerCommandKind): boolean {
+/**
+ * 可恢复且可入队的 steer kind 三元清单。恢复（restore）与事件 commandKind 标注
+ * 语义不同但集合一致，共用同一谓词避免两份清单漂移。
+ */
+function isRestorableSteerKind(kind: string): kind is TurnSteerCommandKind {
   return kind === "sendText" || kind === "sendGoalCommand" || kind === "compact";
 }
 

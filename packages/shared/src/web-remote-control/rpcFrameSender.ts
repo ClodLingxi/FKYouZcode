@@ -25,7 +25,6 @@ import {
  */
 interface PendingBatch {
   messageSeq: number;
-  frames: RpcFrameEnvelope[];
   bytes: number;
   queuedAt: number;
 }
@@ -37,7 +36,6 @@ export class RpcFrameSender {
   private saturated = false;
   private pendingByMessageSeq = new Map<number, PendingBatch>();
   private fifo: number[] = [];
-  private wireOutstanding = new Map<number, PendingBatch>();
   private flowState: "saturated" | "drained" = "drained";
 
   constructor(
@@ -111,7 +109,6 @@ export class RpcFrameSender {
     }
     const batch: PendingBatch = {
       messageSeq,
-      frames,
       bytes: bytes.length,
       queuedAt: this.now(),
     };
@@ -120,7 +117,6 @@ export class RpcFrameSender {
     this.unackedBytes += batch.bytes;
     this.emitFlowIfChanged();
     for (const frame of frames) this.emitter.emit("wire", frame);
-    this.wireOutstanding.set(messageSeq, batch);
     return { ok: true };
   }
 
@@ -131,26 +127,15 @@ export class RpcFrameSender {
       const batch = this.pendingByMessageSeq.get(messageSeq);
       if (!batch) continue;
       this.pendingByMessageSeq.delete(messageSeq);
-      this.wireOutstanding.delete(messageSeq);
       this.fifo.shift();
       this.unackedBytes = Math.max(0, this.unackedBytes - batch.bytes);
     }
     this.emitFlowIfChanged();
   }
 
-  /** 重连（同 bridge 身份）时从未确认批次第 0 帧起重放。 */
-  replayUnacknowledged(): void {
-    for (const messageSeq of this.fifo) {
-      const batch = this.pendingByMessageSeq.get(messageSeq);
-      if (!batch) continue;
-      for (const frame of batch.frames) this.emitter.emit("wire", frame);
-    }
-  }
-
   /** 新 bridge 会话：清空重放缓冲与水位（身份由调用方更新）。 */
   resetReplay(): void {
     this.pendingByMessageSeq.clear();
-    this.wireOutstanding.clear();
     this.fifo.length = 0;
     this.unackedBytes = 0;
     this.emitFlowIfChanged();
