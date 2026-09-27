@@ -76,5 +76,10 @@ export function resolveRemoteCdnBaseUrls(options: ResolveRemoteCdnOptions = {}):
   const configured = configuredBaseUrl ? normalizeBaseUrl(configuredBaseUrl) : undefined;
   const ordered = configured ? [configured, ...chain.filter((base) => base !== configured)] : chain;
   const version = options.version ?? ZCODE_VERSION;
-  return ordered.map((base) => `${base}${RELEASES_PATH_PREFIX}/${version}`);
+  return ordered.map((base) =>
+    // 官方 test 源（studio ssh-remote-assets）路径语义不同：直接 `${base}/${version}`，
+    // 不加 releases 前缀（zcode.cjs `ig`：env==="test" 时返回 `${QE}/${o}`）。
+    // 拼上 prefix 会得到官方服务端不存在的路径，必然 404。
+    base === STUDIO_TEST_CDN_URL ? `${base}/${version}` : `${base}${RELEASES_PATH_PREFIX}/${version}`,
+  );
 }
