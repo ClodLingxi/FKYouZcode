@@ -7,16 +7,17 @@
 //   ④ 配对互斥：同 device_sid 新连接上线 → 踢旧连接（close 4010 + {type:"kicked"}）；
 //   ⑤ pair_status_query → pair_status_ack（paired = 对端当前在线）；
 //   ⑥ {type:"data"} 信封原样透传（不解析 payload、不排序、不缓存）；
-//   ⑦ 关闭码 4004/4009/4010/4011/4012/4013；
+//   ⑦ 关闭码 4004/4010/4011/4012/4013（4009 心跳超时由端侧看门狗触发，relay 不产生）；
 //   ⑧ 不实现 rpc-frame 层（那是 手机↔桌面 端到端的，本进程只透传）。
 //   ⑨ 顺带托管手机客户端静态页（../web-remote-client/dist），扫码即用。
+//   ⑩ 暴露面防护：设备条目容量上限 + 空闲回收 + auth_init 按 IP 限速 + proof 常量时间比较。
 //
 // 运行：PORT=8787 node server.mjs   （无状态，重启后 device_sid 失效，桌面侧重配对即可）
 // 自建：先在 apps/web-remote-client 跑 `node build.mjs` 生成 dist/。
-import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
-import { dirname, extname, join, normalize } from "node:path";
+import { dirname, extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 
@@ -26,9 +27,17 @@ const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST?.trim() || "127.0.0.1";
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 
+// ── 暴露面防护（自建 relay 默认随反代暴露）：无鉴权注册的容量上限、空闲条目回收、
+// auth_init 按 IP 限速（官方有注册速率限制；没有这层，任何触达 relay 的客户端都能
+// 无界制造 device_sid、或拿 QR 里可见的 sid 反复 pre-auth 踢掉真实连接）。 ──
+const MAX_DEVICES = Number(process.env.WEB_REMOTE_MAX_DEVICES ?? 4096);
+const DEVICE_IDLE_MS = 30 * 60 * 1000;
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+const AUTH_INIT_WINDOW_MS = 60 * 1000;
+const AUTH_INIT_MAX_PER_WINDOW = Number(process.env.WEB_REMOTE_AUTH_INIT_RATE ?? 120);
+
 const CLOSE = {
   AUTH_FAILED: 4004,
-  HEARTBEAT_TIMEOUT: 4009,
   KICKED: 4010,
   UNKNOWN_DEVICE: 4011,
   INVALID_REGISTRATION: 4012,
@@ -53,7 +62,8 @@ const MIME = {
 function serveStatic(pathname, res) {
   const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const file = normalize(join(CLIENT_DIST, relative));
-  if (!file.startsWith(CLIENT_DIST) || !existsSync(file)) {
+  // 前缀必须带分隔符：否则名为 `dist*` 的兄弟目录也在 startsWith 范围内。
+  if (!file.startsWith(CLIENT_DIST + sep) || !existsSync(file)) {
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
     res.end("not found (build the client: cd apps/web-remote-client && node build.mjs)");
     return;
@@ -64,10 +74,35 @@ function serveStatic(pathname, res) {
     "cache-control": "no-cache",
   });
   res.end(body);
-};
+}
 
-/** device_sid → { passHash, device: socket|null, remote: socket|null }（进程内，无持久化）。 */
+/** device_sid → { passHash, device: socket|null, remote: socket|null, lastActiveAt }（进程内，无持久化）。 */
 const devices = new Map();
+
+function touchEntry(entry) {
+  entry.lastActiveAt = Date.now();
+}
+
+function sweepIdleDevices() {
+  const now = Date.now();
+  for (const [sid, entry] of devices) {
+    if (entry.device || entry.remote) continue;
+    if (now - (entry.lastActiveAt ?? 0) > DEVICE_IDLE_MS) devices.delete(sid);
+  }
+}
+setInterval(sweepIdleDevices, SWEEP_INTERVAL_MS).unref();
+
+const authInitWindows = new Map();
+function authInitAllowed(ip) {
+  const now = Date.now();
+  const windowState = authInitWindows.get(ip);
+  if (!windowState || now - windowState.startedAt > AUTH_INIT_WINDOW_MS) {
+    authInitWindows.set(ip, { startedAt: now, count: 1 });
+    return true;
+  }
+  windowState.count += 1;
+  return windowState.count <= AUTH_INIT_MAX_PER_WINDOW;
+}
 
 function safeParseJson(text) {
   try {
@@ -81,6 +116,13 @@ function computeProof({ passHash, nonce, role, deviceSid }) {
   return createHmac("sha256", passHash)
     .update(`${nonce}|${role}|${deviceSid}`, "utf8")
     .digest("base64url");
+}
+
+function proofMatches(proof, expected) {
+  if (typeof proof !== "string" || typeof expected !== "string") return false;
+  const a = Buffer.from(proof, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 function send(socket, message) {
@@ -116,9 +158,15 @@ httpServer.listen(PORT, HOST, () => {
   console.log(`[web-remote-relay] listening on ${HOST}:${PORT} (ws path /ws; client static: ${CLIENT_DIST})`);
 });
 
-wss.on("connection", (socket) => {
+wss.on("connection", (socket, req) => {
   // 会话状态：未注册/未认证前只允许注册与认证消息。
-  const session = { role: null, deviceSid: null, registered: false, authenticated: false };
+  const session = {
+    role: null,
+    deviceSid: null,
+    registered: false,
+    authenticated: false,
+    ip: req?.socket?.remoteAddress ?? "unknown",
+  };
 
   socket.on("close", () => {
     const entry = session.deviceSid ? devices.get(session.deviceSid) : undefined;
@@ -155,6 +203,7 @@ wss.on("connection", (socket) => {
         return;
       }
       send(peer, { type: "data", payload: message.payload, server_ts: Date.now() });
+      touchEntry(entry);
       return;
     }
 
@@ -170,10 +219,14 @@ wss.on("connection", (socket) => {
         socket.close(CLOSE.INVALID_REGISTRATION, "invalid registration");
         return;
       }
+      if (devices.size >= MAX_DEVICES) {
+        socket.close(CLOSE.INVALID_REGISTRATION, "device capacity reached");
+        return;
+      }
       const deviceSid = randomUUID();
       const old = devices.get(deviceSid);
       if (old?.device && old.device !== socket) kick(old.device, "re-registered", CLOSE.KICKED);
-      devices.set(deviceSid, { passHash, device: socket, remote: null });
+      devices.set(deviceSid, { passHash, device: socket, remote: null, lastActiveAt: Date.now() });
       session.registered = true;
       session.role = "device";
       session.deviceSid = deviceSid;
@@ -185,6 +238,12 @@ wss.on("connection", (socket) => {
     // 官方现行手机前端（zcode.z.ai/remote/v4）以 role "terminal" 接入：映射到 remote 槽位，
     // 并保留原始角色以选择应答风格（官方读 auth_ack.pair_status；3.14.3 自家客户端读 auth_ok）。
     if (message.type === "auth_init") {
+      // pre-auth 限速：auth_init 在 proof 校验前就会互斥踢掉同槽位旧连接，
+      // 不限速时任何知道 sid（QR 明文可见）的客户端都能循环踢线。
+      if (!authInitAllowed(session.ip)) {
+        socket.close(CLOSE.AUTH_FAILED, "auth_init rate limited");
+        return;
+      }
       const rawRole = typeof message.role === "string" ? message.role : "";
       const role = rawRole === "remote" || rawRole === "terminal" ? "remote" : "device";
       const deviceSid = typeof message.device_sid === "string" ? message.device_sid : "";
@@ -221,12 +280,13 @@ wss.on("connection", (socket) => {
             deviceSid: session.deviceSid,
           })
         : null;
-      if (!entry || !socket._authNonce || message.proof !== expected) {
+      if (!entry || !socket._authNonce || !proofMatches(message.proof, expected)) {
         socket.close(CLOSE.AUTH_FAILED, "auth failed");
         return;
       }
       socket._authNonce = undefined;
       session.authenticated = true;
+      touchEntry(entry);
       const peer = peerOf(entry, session.role);
       // 官方现行前端用枚举（matched/waiting）表达对端在线；自家 3.14.3 客户端走 auth_ok。
       const peerOnline = Boolean(peer && peer.readyState === peer.OPEN);
@@ -251,6 +311,7 @@ wss.on("connection", (socket) => {
       const entry = devices.get(session.deviceSid);
       const peer = entry ? peerOf(entry, session.role) : null;
       const online = Boolean(peer && peer.readyState === peer.OPEN);
+      if (entry) touchEntry(entry);
       send(socket, {
         type: "pair_status_ack",
         paired: online, // 自家 3.14.3 客户端读布尔 paired

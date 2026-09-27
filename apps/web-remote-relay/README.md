@@ -66,10 +66,21 @@ export ZCODE_WEB_REMOTE_CONTROL_URL=https://your-web-client.example.com/remote/v
 
 1. WS `/ws`，单条 JSON 消息 ≤1MB；
 2. `{type:"device_register_init"}` → 分配 `device_sid` → `device_register_ack`；
-3. `auth_init(role: device|remote)` → `auth_challenge{nonce}` → `auth_response{proof}`，
-   `proof = base64url(HMAC-SHA256(passHash, nonce|role|deviceSid))`；
+3. `auth_init(role: device|remote|terminal)` → `auth_challenge{nonce}` → `auth_response{proof}`，
+   `proof = base64url(HMAC-SHA256(passHash, nonce|role|deviceSid))`，常量时间比较；
 4. 配对互斥：同 device_sid 同角色新连接上线 → 旧连接收 `{type:"kicked"}` 并以 4010 关闭；
-5. `pair_status_query` → `pair_status_ack{paired}`（对端在线与否）；
+5. `pair_status_query` → `pair_status_ack{paired, pair_status}`（对端在线与否，双字段并写）；
 6. `{type:"data", payload}` 原样透传到对端；
-7. 关闭码：4004 认证失败 / 4009 心跳超时 / 4010 被接管 / 4011 未知 sid / 4012 注册非法 / 4013 停机；
-8. 不实现 rpc-frame 层。
+7. 关闭码：4004 认证失败/限速 / 4010 被接管 / 4011 未知 sid / 4012 注册非法·容量满 / 4013 停机
+   （4009 心跳超时由设备端看门狗触发，relay 不产生）；
+8. 错误回报：协议误用（未认证 data、对端不在线、未知消息类型、二进制帧等）回
+   `{type:"error", message, server_ts}`；
+9. 不实现 rpc-frame 层。
+
+## 暴露面防护
+
+- 设备条目容量上限：`WEB_REMOTE_MAX_DEVICES`（默认 4096），注册超限以 4012 拒绝；
+- 空闲回收：两端均离线 30 分钟的 device_sid 条目每 5 分钟清扫一次（passHash 不滞留内存）；
+- `auth_init` 按 IP 限速：60s 窗口 ≤ `WEB_REMOTE_AUTH_INIT_RATE` 次（默认 120）——auth_init
+  在 proof 校验前就会互斥踢掉同槽位旧连接，不限速时知道 sid（QR 明文可见）的任何客户端
+  都能循环踢线；
