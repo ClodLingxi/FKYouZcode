@@ -23,21 +23,33 @@ export function WebRemoteControlSection() {
 
   const supported = typeof platform.webRemoteGetState === "function";
 
+  // 官方 renderer 语义：设置页打开期间 1s 轮询状态。QR 要等 relay auth_ok 才在
+  // main 侧铸造（start() 的返回值只有 pairing 态），不轮询的话用户点「开启」后
+  // 二维码永远不会出现。
+  const refresh = useCallback(async () => {
+    if (!supported) return;
+    try {
+      const next = await platform.webRemoteGetState?.();
+      if (!next) return;
+      setStatus((prev) =>
+        prev && prev.state === next.state && prev.qrUrl === next.qrUrl && prev.usingCustomRelay === next.usingCustomRelay
+          ? prev
+          : next,
+      );
+    } catch {
+      // 轮询失败不覆盖现有状态；下一轮再取。
+    }
+  }, [platform, supported]);
+
   useEffect(() => {
     if (!supported) return;
-    let cancelled = false;
-    platform
-      .webRemoteGetState?.()
-      .then((state) => {
-        if (!cancelled) setStatus(state);
-      })
-      .catch(() => {
-        if (!cancelled) setStatus({ state: "disabled", qrUrl: null });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [platform, supported]);
+    void refresh();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      void refresh();
+    }, 1_000);
+    return () => window.clearInterval(interval);
+  }, [refresh, supported]);
 
   useEffect(() => {
     const qrUrl = status?.qrUrl;
@@ -80,7 +92,7 @@ export function WebRemoteControlSection() {
     : "";
 
   return (
-    <section className="rounded-xl rounded-xl border border-border bg-surface p-5" data-testid="web-remote-control">
+    <section className="rounded-xl border border-border bg-surface p-5" data-testid="web-remote-control">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h3 className="text-ui-base font-medium text-foreground">

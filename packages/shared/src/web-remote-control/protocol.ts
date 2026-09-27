@@ -176,7 +176,8 @@ export const relayDeviceRegisterAckSchema = z.object({
 
 export const relayAuthInitSchema = z.object({
   type: z.literal("auth_init"),
-  role: z.enum(["device", "remote"]),
+  // terminal = 官方现行手机前端的角色串（自建 relay 把它映射到 remote 槽位）。
+  role: z.enum(["device", "remote", "terminal"]),
   device_sid: z.string().min(1).max(128),
   meta: metaSchema.optional(),
   client_ts: z.number().int().nonnegative().optional(),
@@ -225,6 +226,16 @@ export const relayKickedSchema = z.object({
   reason: z.string().max(128).optional(),
 });
 
+/** relay 拒绝/提示。官方 relay 形态为 `{type:"error", code, message}`；
+ *  自建 relay（apps/web-remote-relay）发 `{type:"error", message, server_ts}`（无 code）。
+ *  两者都收：code 可选。 */
+export const relayServerErrorSchema = z.object({
+  type: z.literal("error"),
+  code: z.string().max(64).optional(),
+  message: z.string().max(512).optional(),
+  server_ts: z.number().int().nonnegative().optional(),
+});
+
 export const relayClientMessageSchema = z.discriminatedUnion("type", [
   relayDeviceRegisterInitSchema,
   relayAuthInitSchema,
@@ -240,6 +251,7 @@ export const relayServerMessageSchema = z.discriminatedUnion("type", [
   relayPairStatusAckSchema,
   relayDataEnvelopeSchema,
   relayKickedSchema,
+  relayServerErrorSchema,
 ]);
 
 export type RelayClientMessage = z.infer<typeof relayClientMessageSchema>;

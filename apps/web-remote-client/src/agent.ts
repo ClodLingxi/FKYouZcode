@@ -21,6 +21,25 @@ import { getClientId, uuidv7 } from "./proto.js";
 
 export const AGENT_CHANNEL = "zcode-agent";
 
+/** 启动期 RPC 的兜底超时：host 假死时给出错误而不是永远挂起（聊天期的命令有各自的告警路径）。 */
+const BOOT_CALL_TIMEOUT_MS = 15_000;
+
+function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(`${label} timeout`)), BOOT_CALL_TIMEOUT_MS);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 /** 会话列表行的手机端最小视图（服务端形状是 strict schema 的超集）。 */
 export interface SessionInfoLike {
   sessionId: string;
@@ -51,7 +70,9 @@ export class AgentClient {
   ensureHandshake(): Promise<HelloMessage> {
     if (this.helloPromise) return this.helloPromise;
     this.helloPromise = (async () => {
-      const hello = helloMessageSchema.parse(await this.channel.call("helloConversationV4"));
+      const hello = helloMessageSchema.parse(
+        await withTimeout(this.channel.call("helloConversationV4"), "helloConversationV4"),
+      );
       const clientHello: ClientHello = {
         kind: "clientHello",
         protocolVersion: V4_WIRE_PROTOCOL_VERSION,
@@ -60,7 +81,10 @@ export class AgentClient {
         appVersion: "web-remote-client",
         capabilities: { workflowRunDeltas: true },
       };
-      await this.channel.call("initializeConversationV4", clientHello);
+      await withTimeout(
+        this.channel.call("initializeConversationV4", clientHello),
+        "initializeConversationV4",
+      );
       return hello;
     })();
     this.helloPromise.catch(() => {
@@ -74,7 +98,10 @@ export class AgentClient {
     base?: { logEpoch: string; seq: number };
     visibility?: "foreground" | "background";
   } & WorkspaceTarget): Promise<V4ConversationSubscribeResult> {
-    return this.channel.call("subscribeConversationV4", params) as Promise<V4ConversationSubscribeResult>;
+    return withTimeout(
+      this.channel.call("subscribeConversationV4", params),
+      "subscribeConversationV4",
+    ) as Promise<V4ConversationSubscribeResult>;
   }
 
   unsubscribe(params: { subscriptionId: string } & WorkspaceTarget): Promise<void> {
@@ -98,7 +125,9 @@ export class AgentClient {
   listSessions(
     params: { limit?: number; includeArchived?: boolean } & WorkspaceTarget,
   ): Promise<SessionInfoLike[]> {
-    return this.channel.call("listSessions", params) as Promise<SessionInfoLike[]>;
+    return withTimeout(this.channel.call("listSessions", params), "listSessions") as Promise<
+      SessionInfoLike[]
+    >;
   }
 
   createSession(

@@ -31,6 +31,7 @@ export class WebRemoteHostBridge {
   private hostPort: MessagePortMain | null = null;
   private hostProtocol: MessagePortProtocol | null = null;
   private portDisposers: Array<() => void> = [];
+  private sweepTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly options: WebRemoteHostBridgeOptions) {}
 
@@ -67,7 +68,26 @@ export class WebRemoteHostBridge {
     this.framePipeDisposers.push(
       this.receiver.onPeerFlowState((state) => this.hostProtocol?.sendFlowState(state)),
     );
+    this.startSweepTimer();
     this.wireReceiverToPort();
+  }
+
+  /** 周期巡检出站宽限（replayGraceExceeded）与入站组装超时（assemblyTimeout）。
+   *  无巡检时这两类超时只在下一条帧到达时才暴露，ack 丢失会让 8MB 重放缓冲
+   *  静默涨满、桥假死。 */
+  private startSweepTimer(): void {
+    this.stopSweepTimer();
+    this.sweepTimer = setInterval(() => {
+      const senderFault = this.sender?.sweepGrace();
+      if (senderFault) this.options.log(`web-remote sender sweep fault ${senderFault}`);
+      const receiverFault = this.receiver?.sweepAssembly();
+      if (receiverFault) this.options.log(`web-remote receiver sweep fault ${receiverFault}`);
+    }, 5_000);
+  }
+
+  private stopSweepTimer(): void {
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
+    this.sweepTimer = null;
   }
 
   /** host MessagePort 桥（AttachServicePort，web-remote-replayable 可重放档）。 */
@@ -135,6 +155,7 @@ export class WebRemoteHostBridge {
   }
 
   teardown(): void {
+    this.stopSweepTimer();
     this.teardownPipe();
     for (const dispose of this.portDisposers) dispose();
     this.portDisposers = [];
@@ -179,5 +200,6 @@ export class WebRemoteHostBridge {
     this.receiver = null;
     this.adoptedBridgeSessionId = null;
     this.receiverWiredToPort = false;
+    this.stopSweepTimer();
   }
 }

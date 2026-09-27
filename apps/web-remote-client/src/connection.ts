@@ -149,6 +149,18 @@ export class RelaySession {
         authReject(new Error("kicked by relay: superseded by another remote"));
         return;
       }
+      case "error": {
+        // relay 的错误回报通道（注册非法/对端不在线/未知消息类型等）。
+        // 握手前收到 = 连接注定失败，立即上抛避免页面静默挂起；
+        // ready 之后只告警（控制面请求各有 7s 超时兜底）。
+        const detail = message.data.message ?? "(no detail)";
+        console.warn("[relay] server error", detail);
+        if (this.state !== "ready") {
+          markSettled();
+          authReject(new Error(`relay error: ${detail}`));
+        }
+        return;
+      }
       case "data": {
         const envelope = relayDataEnvelopeSchema.parse(message.data);
         this.onDataPayload(envelope.payload);

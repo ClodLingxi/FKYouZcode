@@ -117,50 +117,56 @@ async function boot(): Promise<void> {
     return;
   }
 
-  render("获取桌面 workspace…");
-  const requestId = uuidv7();
-  const bootstrap = await relay.controlRequest({
-    type: "bootstrap-request",
-    request_id: requestId,
-  });
-  const workspaces = bootstrap.type === "bootstrap-response" ? bootstrap.workspaces : undefined;
-  if (!bootstrap.success || !workspaces?.length) {
-    showError(`桌面端没有已打开的 workspace：${bootstrap.error ?? "empty"}`);
-    return;
-  }
-  const workspace: WorkspaceTarget = {
-    workspacePath: workspaces[0]!.workspace_path,
-    ...(workspaces[0]!.workspace_identity
-      ? { workspaceIdentity: workspaces[0]!.workspace_identity }
-      : {}),
-  };
-  const workspaceKey = workspace.workspaceIdentity?.trim() || workspace.workspacePath;
+  // 启动链路（bootstrap → 建桥 → 握手 → 会话列表）任一环失败都要给用户可见的错误，
+  // 不能静默挂死在状态页。
+  try {
+    render("获取桌面 workspace…");
+    const requestId = uuidv7();
+    const bootstrap = await relay.controlRequest({
+      type: "bootstrap-request",
+      request_id: requestId,
+    });
+    const workspaces = bootstrap.type === "bootstrap-response" ? bootstrap.workspaces : undefined;
+    if (!bootstrap.success || !workspaces?.length) {
+      showError(`桌面端没有已打开的 workspace：${bootstrap.error ?? "empty"}`);
+      return;
+    }
+    const workspace: WorkspaceTarget = {
+      workspacePath: workspaces[0]!.workspace_path,
+      ...(workspaces[0]!.workspace_identity
+        ? { workspaceIdentity: workspaces[0]!.workspace_identity }
+        : {}),
+    };
+    const workspaceKey = workspace.workspaceIdentity?.trim() || workspace.workspacePath;
 
-  render("打开 RPC 桥…");
-  const bridge = await relay.controlRequest({
-    type: "workspace-bridge-open",
-    request_id: uuidv7(),
-    workspace_key: workspaceKey,
-    bridge_session_id: `bridge-${uuidv7()}`,
-  });
-  const bridgeReady = bridge.type === "workspace-bridge-ready";
-  if (!bridgeReady || !bridge.success) {
-    showError(`建桥失败：${bridge.error ?? ("reason" in bridge ? bridge.reason : undefined) ?? "unknown"}`);
-    return;
-  }
+    render("打开 RPC 桥…");
+    const bridge = await relay.controlRequest({
+      type: "workspace-bridge-open",
+      request_id: uuidv7(),
+      workspace_key: workspaceKey,
+      bridge_session_id: `bridge-${uuidv7()}`,
+    });
+    const bridgeReady = bridge.type === "workspace-bridge-ready";
+    if (!bridgeReady || !bridge.success) {
+      showError(`建桥失败：${bridge.error ?? ("reason" in bridge ? bridge.reason : undefined) ?? "unknown"}`);
+      return;
+    }
 
-  // ChannelClient 直接骑在 relay 管线上；Initialize 由 host ChannelServer 主动下发。
-  const client = new ChannelClient(relay.protocol);
-  const agent = new AgentClient(client);
-  await agent.ensureHandshake();
+    // ChannelClient 直接骑在 relay 管线上；Initialize 由 host ChannelServer 主动下发。
+    const client = new ChannelClient(relay.protocol);
+    const agent = new AgentClient(client);
+    await agent.ensureHandshake();
 
-  const sessions = await agent.listSessions({ ...workspace, limit: 50 });
-  const latest = pickLatestSession(sessions);
-  if (!latest) {
-    showError("该 workspace 还没有会话；请在桌面端打开一个会话后再刷新本页。");
-    return;
+    const sessions = await agent.listSessions({ ...workspace, limit: 50 });
+    const latest = pickLatestSession(sessions);
+    if (!latest) {
+      showError("该 workspace 还没有会话；请在桌面端打开一个会话后再刷新本页。");
+      return;
+    }
+    await enterChat(agent, workspace, latest.sessionId, latest.title);
+  } catch (error) {
+    showError(`桌面端连接失败：${error instanceof Error ? error.message : String(error)}`);
   }
-  await enterChat(relay, agent, workspace, sessions, latest.sessionId, latest.title);
 }
 
 function pickLatestSession(sessions: SessionInfoLike[]): SessionInfoLike | null {
@@ -170,10 +176,8 @@ function pickLatestSession(sessions: SessionInfoLike[]): SessionInfoLike | null 
 }
 
 async function enterChat(
-  relay: RelaySession,
   agent: AgentClient,
   workspace: WorkspaceTarget,
-  sessions: SessionInfoLike[],
   sessionId: string,
   sessionTitle: string,
 ): Promise<void> {
@@ -189,12 +193,18 @@ async function enterChat(
     scheduleRender();
   });
 
-  const subscribeResult = await agent.subscribe({
-    ...workspace,
-    sessionId,
-    visibility: "foreground",
-  });
-  projection.subscriptionId = subscribeResult.ack.subscriptionId;
+  try {
+    const subscribeResult = await agent.subscribe({
+      ...workspace,
+      sessionId,
+      visibility: "foreground",
+    });
+    projection.subscriptionId = subscribeResult.ack.subscriptionId;
+  } catch (error) {
+    // 订阅失败时退订页面级帧监听，boot 的统一错误页会接手。
+    unsubscribeFrames();
+    throw error;
+  }
 
   // ── 聊天 UI ──
 
@@ -348,9 +358,6 @@ async function enterChat(
   }
 
   renderRows();
-  void relay;
-  void sessions;
-  void unsubscribeFrames;
 }
 
 void boot();

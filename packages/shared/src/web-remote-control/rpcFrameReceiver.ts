@@ -11,7 +11,6 @@ import {
   crc32Hex,
   rpcFrameEnvelopeSchema,
   type RpcFrameAck,
-  type RpcFrameEnvelope,
   type RpcFrameIdentity,
 } from "./rpcFrameCodec.js";
 
@@ -28,9 +27,14 @@ interface ReassemblyState {
   firstFragmentAt: number;
 }
 
-/** 双端同构的帧指纹（去重键）：seq/messageSeq/fragmentIndex/长度。 */
-function frameFingerprint(frame: RpcFrameEnvelope): string {
-  return `${frame.messageSeq}:${frame.fragmentIndex}:${frame.dataBase64.length}`;
+/** 双端同构的消息指纹（去重键）：字节总数/分片数/CRC。只依赖 wire 元数据，
+ * 任意分片的重放都能与完整消息的指纹比对（单位统一在字节域，不能用 base64 字符数）。 */
+function messageFingerprint(meta: {
+  messageBytes: number;
+  fragmentCount: number;
+  checksumValue: string;
+}): string {
+  return `${meta.messageBytes}:${meta.fragmentCount}:${meta.checksumValue}`;
 }
 export class RpcFrameReceiver {
   private readonly emitter = new MiniEmitter();
@@ -104,7 +108,11 @@ export class RpcFrameReceiver {
       this.emitter.emit("fault", "fragmentIndexOutOfRange", `seq=${frame.seq}`);
       return;
     }
-    const fingerprint = frameFingerprint(frame);
+    const fingerprint = messageFingerprint({
+      messageBytes: frame.messageBytes,
+      fragmentCount: frame.fragmentCount,
+      checksumValue: frame.checksum.value,
+    });
     if (frame.messageSeq <= this.lastDeliveredMessageSeq) {
       // 重放/重复：已在过去交付 → 补发累积 ack（幂等），不算 fault。
       const seen = this.seenMessageFingerprints.get(frame.messageSeq);
@@ -207,7 +215,11 @@ export class RpcFrameReceiver {
     this.lastDeliveredMessageSeq = state.messageSeq;
     this.seenMessageFingerprints.set(
       state.messageSeq,
-      `${state.messageSeq}:0:${state.parts.get(0)!.length}`,
+      messageFingerprint({
+        messageBytes: state.messageBytes,
+        fragmentCount: state.fragmentCount,
+        checksumValue: state.checksum,
+      }),
     );
     // 指纹表只保留最近窗口，防无界增长。
     if (this.seenMessageFingerprints.size > 256) {

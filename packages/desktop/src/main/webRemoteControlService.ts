@@ -117,6 +117,8 @@ export class WebRemoteControlService {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.state = "disabled";
+    // 契约「未 ready 时为 null」：停用后不得再下发含凭据的旧 QR。
+    this.lastQr = null;
   }
 
   /** 重置配对：轮换 passHash（QR 即凭据，泄露后的唯一处置）。 */
@@ -146,8 +148,17 @@ export class WebRemoteControlService {
     this.closeSocket();
     this.state = this.state === "ready" ? "reconnecting" : this.state;
     // 桥身份由手机端 workspace-bridge-open 下发，重连后需重新 adopt。
+    // 每次连接都轮换 device_sid：上一张 QR 里的 sid 即刻失效，先清掉。
+    this.lastQr = null;
 
-    const socket = this.options.createWebSocket(this.relayWsUrl());
+    let socket: WebSocketLike;
+    try {
+      socket = this.options.createWebSocket(this.relayWsUrl());
+    } catch (error) {
+      // 同步抛出 = URL 非法（如缺 scheme）：确定性错误，重试无意义，留给用户修 env。
+      this.options.log("web-remote invalid relay ws url; fix ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL", error);
+      return;
+    }
     this.socket = socket;
     socket.addEventListener("open", () => {
       if (!this.pairing) return;
@@ -216,14 +227,21 @@ export class WebRemoteControlService {
       }
       case "auth_ok": {
         this.state = "ready";
-        this.lastQr = buildPairingQrUrl({
-          remoteUrl: this.remoteUrl(),
-          deviceSid: pairing.deviceSid ?? "",
-          passHash: pairing.passHash,
-          deviceMid: pairing.deviceMid,
-          deviceName: hostnameSafe(),
-          appVersion: this.options.appVersion,
-        });
+        try {
+          this.lastQr = buildPairingQrUrl({
+            remoteUrl: this.remoteUrl(),
+            deviceSid: pairing.deviceSid ?? "",
+            passHash: pairing.passHash,
+            deviceMid: pairing.deviceMid,
+            deviceName: hostnameSafe(),
+            appVersion: this.options.appVersion,
+          });
+        } catch (error) {
+          // ZCODE_WEB_REMOTE_CONTROL_URL 配置非法（如缺 scheme）会在 new URL 抛出；
+          // 不能让它在 WS 消息处理器里炸掉主进程，降级为「无 QR」并给出可操作的日志。
+          this.lastQr = null;
+          this.options.log("web-remote invalid ZCODE_WEB_REMOTE_CONTROL_URL; pairing QR unavailable", error);
+        }
         this.startHeartbeat();
         this.options.log("web-remote relay ready");
         return;
@@ -237,6 +255,10 @@ export class WebRemoteControlService {
         this.bridge.teardown();
         this.state = "reconnecting";
         this.scheduleReconnect();
+        return;
+      }
+      case "error": {
+        this.options.log(`web-remote relay error: ${message.message ?? "(no detail)"}`);
         return;
       }
       case "data": {
