@@ -61,6 +61,8 @@ Relay 服务器（官方托管）
 | S→C | `{type:"error", code, message}`，code ∈ `KICKED` / `AUTH_FAILED` / `INTERNAL` / `WRONG_PARAM` |
 | 双向 | `{type:"data", payload, client_ts?, server_ts?}`（业务/帧负载信封） |
 
+> 本仓库自建设备端（`webRemoteControlService.ts`）在认证成功后走 `auth_ok`（§2.2 表中的 `auth_ack` 仅官方 terminal 角色前端使用）；差异全表见 §7.1。
+
 ### 2.3 HMAC proof（字节级，已用官方测试向量验证）
 ```
 passHash 存储/传输形态：base64( SHA-256( base64url(randomBytes(24)) ) )   // 44 字节 ASCII 字符串
@@ -96,6 +98,7 @@ proof = base64url( HMAC-SHA256( key = <passHash ASCII 字节>,
   "bridgeGeneration":0,            // 可选, int≥0（bridge 重开代数）
   "recoveryId":"<同上字符集>",      // 可选
   "seq":1,                          // 物理帧序号, 1..2^53-1, 跨消息连续
+                                    // （自建实现 seq := fragmentIndex，仅单消息内连续，无物理序号层，见 §7.1）
   "messageSeq":1,                   // 逻辑消息序号, 1..2^53-1
   "fragmentIndex":0, "fragmentCount":1,   // 0..63 / 1..64
   "messageBytes":123,               // 整条消息字节数, 1..16MB
@@ -131,6 +134,7 @@ ACK 帧：`{zcode_type:"rpc-frame-ack", bridgeSessionId, bridgeGeneration?, reco
 - 饱和流控：`onSaturated`/`onDrained` → main 向 host port 发 `{"__zcodeRpcControl":"connection-flow-v1","state":"saturated"|"drained"}`（host 再转发给 agent 连接 `setTransportFlowState`）。
 - 45s 宽限：最旧未确认批次（`replayGraceExceeded`）或 pending-ack（`ackGraceExceeded`）超时 → 降级。
 - **重连重放**：重新配对（`onSendReady`）时 `resetReplay()` 并从每条未确认消息的第 0 帧起重发全部未确认字节（≤8MB/45s 内有效，接收端靠指纹去重）。
+  （自建实现**没有**重连重放：桌面端每次 relay 断开即 `bridge.teardown()` 连 sender 一并销毁；手机端 `resetReplay()` 只清缓冲不重发。见 §7.1。）
 - 入队/度量失败：`encodingFailed`、`outerMeterFailed`、`sendFailed`、`emptyMessage`、`messageTooLarge`、`fragmentLimitExceeded`、`envelopeTooLarge`、`sequenceOverflow`、`internalEnvelopeError`。
 
 ### 3.4 接收端语义（WebRemoteControlRpcTransportAssembler，严格顺序）
@@ -147,7 +151,9 @@ ACK 帧：`{zcode_type:"rpc-frame-ack", bridgeSessionId, bridgeGeneration?, reco
 `{zcode_type:"bridge-degraded", bridgeSessionId, bridgeGeneration?, recoveryId?, reason:"rpc-transport-fault", ...}`；
 手机端可凭 `recoveryId`/`bridgeGeneration` 发 `workspace-bridge-open` 重建。app 层 `bridge-degraded.reason` 枚举：`rpc-transport-fault | rpc-frame-gap | buffer-overflow | buffer-timeout`。
 
-### 3.6 故障码全表（remote.rpcFrame.*，共 36 个）
+### 3.6 故障码全表（remote.rpcFrame.*，官方共 36 个）
+
+> 自建实现只落地了其中 15 个（`WEB_REMOTE_RPC_FRAME_FAULTS`，packages/shared/src/web-remote-control/protocol.ts），无物理序号类故障（physicalGap/conflictingDuplicate/sequenceOverflow 等随物理序号层一起省略）。
 | 故障码 | 触发点 | terminal |
 |---|---|---|
 | ackGraceExceeded | 发出的某消息 45s 内未获 ack | ✔ |
@@ -253,16 +259,29 @@ bridge ready 后，**rpc-frame 的 dataBase64 拼接出的字节 = main↔host M
 - 桌面应用本体无需改动：feature gate 默认开启，协议实现完整保留在 main 中；共享协议库（schema/QR 解析/proof/组装器/常量/测试向量）就在 CLI 运行时 zcode.cjs 内，可直接作为移植底稿。
 
 ### 自建 relay 服务器的最小行为验收清单
-1. **端点**：WS 路径 `/ws`；接受 `?mid=<deviceMid>` 查询参数与 `X-Device-ID` 头（可用于识别设备）；permessage-deflate 可选；单条 WS 消息（JSON 文本）≤1MB，超限应拒绝/断开。
-2. **设备注册**：收到 `{type:"device_register_init", device_mid, pass_hash, meta, client_ts}` → 分配全局唯一 `device_sid` → 回 `{type:"device_register_ack", device_sid}`。同一 device_mid 重复注册策略自定（官方用 passHash 轮换区分）。
-3. **认证**：收到 `{type:"auth_init", role:"device", device_sid, meta, client_ts}` → 生成一次性 `nonce` 回 `{type:"auth_challenge", nonce}` → 校验 `{type:"auth_response", device_sid, proof}`：
-   `base64url(HMAC-SHA256(pass_hash, nonce + "|" + role + "|" + device_sid)) == proof`（用官方测试向量做单元测试）。失败回 `{type:"error", code:"AUTH_FAILED", message}`。
-4. **手机端配对**：Web 客户端以 QR 的 `sid`(=device_sid)/`hash`(=pass_hash) 发起同构 auth（role 用手机侧字符串，**[未还原]**，需与自建客户端约定）；配对成功后向双方回 `{type:"auth_ack"|"pair_status_ack", pair_status:"matched"}`；无客户端时 `"waiting"`。同一 sid 新客户端接入必须把旧客户端踢掉（旧连接收 `{type:"error",code:"KICKED"}`；桌面收到 KICKED 会重连并最终以 `session-conflict` 终止）。
-5. **心跳**：对 `pair_status_query` 回 `pair_status_ack`（30s 内必须有 ack，否则设备端主动重连）；连接层空闲不主动断（≥30s 容忍）。
-6. **数据转发**：把 `{type:"data", payload, client_ts}` 原样转发给配对的对端（可补 `server_ts`）；payload 内容（rpc-frame / app JSON）**不解析不修改不排序**，仅按 TCP 顺序透传；未配对时收到的 data 应丢弃或报 `WRONG_PARAM`。内部错误回 `INTERNAL`。
-7. **关闭码**（客户端按此映射失败原因）：`4004 session-not-found`、`4009 session-conflict(被踢)`、`4010 desktop-disconnected`、`4011 session-expired`、`4012 workspace-closed`、`4013 invalid-mobile-connection`。会话 TTL 自定（官方 server 侧 TTL **[未还原]**，QR 的 `t` 参数建议用于过期校验）。
+
+> 以下以本仓库已实现的 relay（`apps/web-remote-relay/server.mjs`）为准。
+
+1. **端点**：WS 路径 `/ws`；单条 WS 消息（JSON 文本）≤1MB，超限以 4012 断开。官方 relay 另接受 `?mid=<deviceMid>` 查询参数与 `X-Device-ID` 头、可选 permessage-deflate——自建实现**均未实现**（自家客户端不发送，无需兼容）。
+2. **设备注册**：收到 `{type:"device_register_init", device_mid, pass_hash, meta, client_ts}` → 分配全局唯一 `device_sid` → 回 `{type:"device_register_ack", device_sid}`。自建实现有暴露面防护：设备条目容量上限（`WEB_REMOTE_MAX_DEVICES`，默认 4096，超限以 4012 拒绝）与空闲条目回收（两端均离线 30 分钟即删除）。
+3. **认证**：收到 `{type:"auth_init", role:"device"|"remote"|"terminal", device_sid, meta, client_ts}` → 生成一次性 `nonce` 回 `{type:"auth_challenge", nonce}` → 校验 `{type:"auth_response", device_sid, proof}`：
+   `base64url(HMAC-SHA256(pass_hash, nonce + "|" + role + "|" + device_sid)) == proof`（用官方测试向量做单元测试；自建实现用常量时间比较）。失败以 **4004** 关闭。auth_init 按 IP 限速（60s 窗口 ≤ `WEB_REMOTE_AUTH_INIT_RATE` 次，默认 120）——auth_init 在 proof 校验前就会互斥踢掉同槽位旧连接，不限速时知道 sid 的任何客户端都能循环踢线。
+4. **手机端配对**：Web 客户端以 QR 的 `sid`(=device_sid)/`hash`(=pass_hash) 发起同构 auth。自建实现的应答：自家 3.14.3 客户端收 `{type:"auth_ok"}`；官方 terminal 角色前端收 `{type:"auth_ack", pair_status:"matched"|"waiting"}`。同一 sid 同槽位新连接上线时旧连接收 `{type:"kicked", reason}` 并以 **4010** 关闭（桌面端收到 kicked 后重连、轮换新 sid 重新注册）。
+5. **心跳**：对 `pair_status_query` 回 `pair_status_ack{paired, pair_status}`（双字段并写：自家客户端读布尔 `paired`，官方前端读枚举 `pair_status`；30s 内无 ack 设备端主动重连）。
+6. **数据转发**：把 `{type:"data", payload, client_ts}` 原样转发给配对的对端（补 `server_ts`）；payload 内容（rpc-frame / app JSON）**不解析不修改不排序**；对端不在线回 `{type:"error", message:"peer not connected"}`。未知消息类型/二进制帧等错误统一回 `{type:"error", message, server_ts}`（无 `code` 字段；schema 见 `relayServerErrorSchema`，官方形态带 code 的 error 也能解析）。
+7. **关闭码**（自建实现，客户端按此映射失败原因）：`4004 认证失败/限速`、`4010 被新连接接管`、`4011 未知 device_sid`、`4012 注册非法/容量满/消息超限`、`4013 服务停机`。`4009` 为心跳超时保留位——由**设备端**看门狗触发（30s 无 ack 主动断开重连），relay 自身不产生。官方 server 侧的关闭码语义（早版文档所列 session-not-found/session-conflict 等）未在官方实现中确证 **[未还原]**。会话 TTL 自定（QR 的 `t` 参数建议用于过期校验，自建 relay 未强制）。
 8. **不需要实现**：rpc-frame 的 seq/ack/重放/水位（端到端能力，桌面与手机自行处理 8MB/45s 重放、1MB/256KB 流控）；帧内二进制 RPC。
 9. **自建 Web 客户端**需实现：QR 参数解析（`sid/hash/t/mid/name/app_version[/theme]`）、同款 auth、JSON 控制面（§4.1 全部消息）、rpc-frame 编解码 + CRC32 + 组装器/重放缓冲（§3）、以及帧内二进制 RPC 客户端（§4.2 的 100/102 与 201/202 序列化）——工作量大头在此，而非 relay。
+
+### 7.1 自建实现与官方规格的差异（以本仓库代码为准）
+
+- **auth 应答消息名**：自家设备端收 `auth_ok`（`relayAuthOkSchema`）；`auth_ack{pair_status}` 仅官方 terminal 前端兼容层（d1fe2d1）使用。
+- **error 消息**：自建 relay 回 `{type:"error", message, server_ts}`，无 `code` 字段（官方形态 `code ∈ KICKED/AUTH_FAILED/INTERNAL/WRONG_PARAM` 见 §2.2，`relayServerErrorSchema` 对两者都兼容）。
+- **seq 语义**：自建帧的 `seq := fragmentIndex`（单消息内 0 起连续），不是跨消息的物理帧序号；没有物理序号层，故 `physicalGap/conflictingDuplicate/physicalSequenceExhausted` 等故障码不存在。重放去重靠消息级指纹（`messageBytes:fragmentCount:checksum`）。
+- **重连重放**：未实现。桌面端 relay 断开即 teardown 桥与 rpc-frame sender；手机端 `resetReplay()` 只清缓冲。`replayUnacknowledged` 已删除（无可达调用路径）。
+- **故障码 15 个 vs 官方 36 个**：见 §3.6 注。
+- **JSON 控制面方言**：自建 `webRemoteControlControlPlane.ts` 用 `type`/`request_id` 蛇形（官方 §4.1 为 `zcode_type`/`requestId` 驼峰 + result 包裹）。因此官方前端要配官方桌面端；自建前端配自建桌面端（apps/web-remote-relay/README.md 已披露）。
+- **renderer 状态获取**：自建设置页 QR 卡对 `webRemoteGetState` 做 1s 轮询（与官方 §2.4 一致）；QR 在设备端 `auth_ok` 时才铸造。
 
 ### 未还原清单
 - 手机端在 relay 认证中使用的 role 字符串及其中继细节（仅桌面 `device` 与共享库 `terminal` 有实证）。
