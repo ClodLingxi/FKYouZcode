@@ -17,6 +17,8 @@ export const ModelApiOperation = {
   GoalVerification: "goal_completion_verification",
   GitCommitMessage: "workspace_git_commit_message",
   ProjectMemoryExtract: "project_memory_extract",
+  // 语义召回 selector 的单次模型调用（memory recall prefetch）；官方闭源同名字面量。
+  ProjectMemoryRecall: "project_memory_recall",
   ReadSessionContextExtract: "read_session_context_extract",
   ReadSessionContextSynthesize: "read_session_context_synthesize",
   SessionTitle: "session_title_generation",
@@ -267,6 +269,25 @@ export interface ResponseModelTelemetryDescriptor {
   model: string;
 }
 
+/**
+ * Client Request Signing V4 的单次 observation（模型请求客户端签名 / PoW）。
+ * 逆向官方 `AiSdkModelExecution.observeClientSigning` 的载荷，按 x-request-id 关联到
+ * model_attempt span；属性/事件映射见 agent-trace-runtime 的 recordClientSigning。
+ */
+export type ModelClientSigningObservation =
+  | { readonly kind: "signed_sent" }
+  | { readonly kind: "unsigned_sent"; readonly reason: string }
+  | {
+      readonly kind: "handshake_failed";
+      readonly businessCode?: number | string;
+      readonly errorKind: string;
+      readonly httpStatus?: number;
+      readonly reason?: string;
+    }
+  | { readonly kind: "verify_rejected"; readonly reason: string; readonly signedAttempt: number }
+  | { readonly kind: "bypass_entered" }
+  | { readonly kind: "request_failed_closed"; readonly errorKind: string };
+
 export type ModelCallTraceStart = {
   logicalCallId: string;
   modelRole?: string;
@@ -335,6 +356,7 @@ export interface ModelAttemptSpanWriter extends AgentTelemetryScope {
   setProviderErrorCode(code: string): void;
   setProviderErrorMessage(message: string): void;
   setRetryAfterMs(delayMs: number): void;
+  recordClientSigning(observation: ModelClientSigningObservation): void;
   markFirstProviderEvent(): void;
   markFirstContent(): void;
   markFirstText(): void;

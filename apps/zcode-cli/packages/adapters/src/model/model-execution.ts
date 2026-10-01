@@ -27,10 +27,38 @@ import { createNetworkProxyFetch } from "../network/proxy-fetch.js";
 import { createOfficialCodingPlanGatewayFetch } from "./official-coding-plan-gateway.js";
 import { normalizeModelTlsFailure } from "./failure-tls.js";
 import { mergeModelRequestHeaders } from "./model-request-headers.js";
+import {
+  AiSdkClientRequestSigningState,
+  ClientRequestSigningV4Manager,
+  requiresClientRequestSigning,
+  type ClientSigningObservation,
+  type ClientSigningObservationContext,
+  type ClientSigningObserver,
+} from "./client-request-signing/index.js";
 
 export type AiSdkProviderKind = "openai" | "anthropic" | "openai-compatible";
 
 export type EnvRecord = Record<string, string | undefined>;
+
+// Client Request Signing V4 公开类型（供 bootstrap 装配引用）。
+export type {
+  AiSdkClientRequestSigningState,
+  ClientSigningObservation,
+  ClientSigningObservationContext,
+  ClientSigningObserver,
+} from "./client-request-signing/index.js";
+
+/**
+ * Client Request Signing V4 装配配置（逆向官方 `createRuntimeAiSdkModelExecutionConfig`
+ * 的 codingPlanSignature 字段）：gate 端点 = ZCode 平台 origin + /api/v1/agent/configs，
+ * headers 与模型请求同款来源头；state 为 App 级共享私钥缓存与 gate 去重表。
+ */
+export interface AiSdkCodingPlanSignatureConfig {
+  readonly configUrl: string;
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly clientVersion?: string;
+  readonly state?: AiSdkClientRequestSigningState;
+}
 
 interface AiSdkProviderConfig {
   access: RegistryProviderConfig["access"];
@@ -45,12 +73,16 @@ interface AiSdkProviderConfig {
 export interface AiSdkModelExecutionConfig {
   /** 执行环境提供的默认来源信息，不属于 Provider 持久化配置。 */
   defaultHeaders?: Readonly<Record<string, string>>;
+  /** Client Request Signing V4（Coding Plan 模型请求签名 / PoW）；缺省完全不装配。 */
+  codingPlanSignature?: AiSdkCodingPlanSignatureConfig;
   env?: EnvRecord;
   network?: AiSdkNetworkConfig;
 }
 
 export interface AiSdkModelExecutionOptions {
   logger?: Logger;
+  /** 签名 observation 出口（日志/遥测）；缺省仅写 logger。 */
+  observeClientSigning?: ClientSigningObserver;
   transport?: ProviderFetch;
 }
 
@@ -154,16 +186,25 @@ const AUTHORIZATION_HEADER_NAME = "Authorization";
 export class AiSdkModelExecution {
   private readonly env: EnvRecord;
   private readonly defaultHeaders: Record<string, string>;
+  private readonly codingPlanSignature?: AiSdkCodingPlanSignatureConfig;
   private readonly network: AiSdkNetworkConfig;
   private readonly logger?: Logger;
+  private readonly clientSigningObserver?: ClientSigningObserver;
   private readonly baseTransport?: ProviderFetch;
   private readonly providerTransports = new Map<string, ProviderFetch>();
+  private providerProxyFetch?: ProviderFetch;
+  private signingRuntime?: {
+    readonly manager: ClientRequestSigningV4Manager;
+    readonly state: AiSdkClientRequestSigningState;
+  };
 
   constructor(config: AiSdkModelExecutionConfig = {}, options: AiSdkModelExecutionOptions = {}) {
     this.env = config.env ?? process.env;
     this.defaultHeaders = { ...config.defaultHeaders };
+    this.codingPlanSignature = config.codingPlanSignature;
     this.network = { ...config.network };
     this.logger = options.logger;
+    this.clientSigningObserver = options.observeClientSigning;
     this.baseTransport = options.transport;
   }
 
@@ -263,8 +304,15 @@ export class AiSdkModelExecution {
     const apiKey = this.resolveApiKey(providerConfig);
     const headers = providerConfig.headers;
     const providerTransport = this.resolveProviderTransport(providerId);
+    // 签名层位于业务错误检测之下、网关路由之上：401 验签拒绝的「重新握手重试一次」
+    // 在这里闭环，上层仍按普通响应/错误处理；网关重写后跨 origin 由 origin_mismatch 分支拦截。
+    const signingFetch = this.resolveClientSigningFetch(
+      providerId,
+      providerConfig,
+      providerTransport,
+    );
     const fetch = createProviderBusinessErrorFetch({
-      fetch: providerTransport,
+      fetch: signingFetch ?? providerTransport,
       providerId,
       providerKind: providerConfig.kind,
     });
@@ -331,12 +379,115 @@ export class AiSdkModelExecution {
     const transport = createProviderTransportFetch({
       caCertFile: this.network.caCertFile,
       env: this.env,
-      fetch: this.baseTransport,
+      fetch: this.resolveProviderProxyFetch(),
       httpProxy: this.network.httpProxy,
       noProxy: this.network.noProxy,
     });
     this.providerTransports.set(providerId, transport);
     return transport;
+  }
+
+  /** 用户 HTTP 代理 fetch（网络配置全 provider 一致，进程内共享一份）；签名 gate 复用。 */
+  private resolveProviderProxyFetch(): ProviderFetch {
+    this.providerProxyFetch ??= createNetworkProxyFetch({
+      caCertFile: this.network.caCertFile,
+      env: this.env,
+      fetch: this.baseTransport,
+      httpProxy: this.network.httpProxy,
+      noProxy: this.network.noProxy,
+    });
+    return this.providerProxyFetch;
+  }
+
+  /**
+   * Client Request Signing V4 装配判定（逆向官方 requiresClientRequestSigning）：
+   * Coding Plan API Key 与个人/团队 Coding Plan 账号强制；Start Plan / off-peak 不装配；
+   * 自建 provider 仅域名白名单（api.chatglm.site / zcode.chatglm.site / z.ai / bigmodel.cn
+   * 路由域）命中时装配。未装配返回 undefined，fetch 链与移植前完全一致。
+   */
+  private resolveClientSigningFetch(
+    providerId: string,
+    providerConfig: AiSdkProviderConfig,
+    providerTransport: ProviderFetch,
+  ): ProviderFetch | undefined {
+    const config = this.codingPlanSignature;
+    if (!config) return undefined;
+    if (
+      !requiresClientRequestSigning({
+        access: providerConfig.access,
+        baseURL: providerConfig.baseURL,
+      })
+    ) {
+      return undefined;
+    }
+    // 账号态 access 无静态 apiKey（请求期 requestAuth 注入）；无 key 时无法签名，保持裸发。
+    const apiKey = providerConfig.apiKey?.trim();
+    if (!apiKey) return undefined;
+    const runtime = this.resolveSigningRuntime(config);
+    return runtime.manager.createFetch({
+      apiKey,
+      baseURL: providerConfig.baseURL,
+      ...(config.clientVersion ? { clientVersion: config.clientVersion } : {}),
+      gate: runtime.state.resolveGate(apiKey),
+      keyCache: runtime.state.keyCache,
+      observe: (observation, context) => this.emitClientSigningObservation(observation, context),
+      providerId,
+      transport: providerTransport,
+    });
+  }
+
+  private resolveSigningRuntime(config: AiSdkCodingPlanSignatureConfig): {
+    readonly manager: ClientRequestSigningV4Manager;
+    readonly state: AiSdkClientRequestSigningState;
+  } {
+    if (!this.signingRuntime) {
+      const state =
+        config.state ??
+        new AiSdkClientRequestSigningState({
+          configUrl: config.configUrl,
+          ...(config.headers ? { headers: config.headers } : {}),
+          ...(this.logger ? { logger: this.logger } : {}),
+          network: this.network,
+          proxyTransport: this.resolveProviderProxyFetch(),
+        });
+      // keyCache 由 state 持有；Manager 与 Signer 共享同一份 apiKey×origin 私钥缓存。
+      this.signingRuntime = {
+        state,
+        manager: new ClientRequestSigningV4Manager(state.keyCache),
+      };
+    }
+    return this.signingRuntime;
+  }
+
+  /** observation 扇出：日志（级别映射逆向官方）+ 可选 observeClientSigning 回调（遥测）。 */
+  private emitClientSigningObservation(
+    observation: ClientSigningObservation,
+    context: ClientSigningObservationContext,
+  ): void {
+    const fields: Record<string, unknown> = { ...context };
+    for (const [key, value] of Object.entries(observation)) {
+      if (key !== "kind") fields[key] = value;
+    }
+    const message = `model.client_signing.${observation.kind}`;
+    switch (observation.kind) {
+      case "signed_sent":
+        this.logger?.debug(message, fields);
+        break;
+      case "unsigned_sent":
+        this.logger?.info(message, fields);
+        break;
+      case "handshake_failed":
+      case "verify_rejected":
+      case "bypass_entered":
+      case "request_failed_closed":
+        this.logger?.warn(message, fields);
+        break;
+    }
+    try {
+      this.clientSigningObserver?.(observation, context);
+    } catch {
+      // 遥测回调异常不得影响模型请求主链路。
+    }
   }
 }
 

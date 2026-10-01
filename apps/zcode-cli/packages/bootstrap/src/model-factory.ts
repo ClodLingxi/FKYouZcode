@@ -3,6 +3,7 @@
 import {
   AiSdkModelAdapter,
   type AiSdkModelExecutionConfig,
+  type ClientSigningObserver,
   type EnvRecord,
 } from "@zcode/adapters/model";
 import type { Logger, ModelStatusSink } from "@zcode/contracts";
@@ -12,6 +13,7 @@ interface CreateModelAdapterBaseOptions {
   logger?: Logger;
   modelIoDir?: string;
   modelIoFullRetentionEnabled?: boolean;
+  observeClientSigning?: ClientSigningObserver;
   streamIdleTimeoutMs?: number;
   statusSink?: ModelStatusSink;
 }
@@ -30,6 +32,7 @@ export function createModelAdapter(options: CreateModelAdapterOptions): AiSdkMod
     env: options.env,
     logger: options.logger,
     modelIoFullRetentionEnabled: options.modelIoFullRetentionEnabled,
+    observeClientSigning: options.observeClientSigning,
     streamIdleTimeoutMs: options.streamIdleTimeoutMs,
     statusSink: options.statusSink,
   });

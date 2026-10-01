@@ -24,8 +24,10 @@ import {
   type AiSdkResolvedModel,
   type AiSdkNetworkConfig,
   type AiSdkModelExecutionConfig,
+  type AiSdkCodingPlanSignatureConfig,
   type EnvRecord,
 } from "./model-execution.js";
+import type { ClientSigningObserver } from "./client-request-signing/index.js";
 import {
   resolveAiSdkModelRetryOptions,
   type AiSdkModelRetryOptions,
@@ -55,8 +57,10 @@ export type {
 export { normalizeUsage, toModelStreamEvent } from "./runner-normalization.js";
 
 export interface AiSdkModelAdapterOptions {
+  codingPlanSignature?: AiSdkCodingPlanSignatureConfig;
   defaultHeaders?: AiSdkModelExecutionConfig["defaultHeaders"];
   network?: AiSdkNetworkConfig;
+  observeClientSigning?: ClientSigningObserver;
   runtime?: AiSdkModelRuntime;
   env?: EnvRecord;
   debugDir?: string;
@@ -92,11 +96,17 @@ export class AiSdkModelAdapter {
     this.execution = new AiSdkModelExecution(
       {
         defaultHeaders: options.defaultHeaders,
+        ...(options.codingPlanSignature
+          ? { codingPlanSignature: options.codingPlanSignature }
+          : {}),
         ...(options.network ? { network: options.network } : {}),
         ...(options.env ? { env: options.env } : {}),
       },
       {
         ...(options.logger ? { logger: options.logger } : {}),
+        ...(options.observeClientSigning
+          ? { observeClientSigning: options.observeClientSigning }
+          : {}),
       },
     );
     this.runtime = options.runtime ?? defaultRuntime;

@@ -33,6 +33,7 @@ import type {
   ModelCallFailureStage,
   ModelCallSpanWriter,
   ModelCallTraceStart,
+  ModelClientSigningObservation,
   ModelExecutionTelemetryPort,
   ModelFinishReason,
   ModelReasoningControlType,
@@ -1392,6 +1393,62 @@ class ModelAttemptWriter extends TrackedBaseWriter implements ModelAttemptSpanWr
     this.setAttribute("zcode.model_attempt.retry_after_ms", finiteNonNegative(delayMs));
   }
 
+  /**
+   * Client Request Signing V4 observation（逆向官方 `recordClientSigning`，zcode.cjs @13301777 区）：
+   * 属性 `zcode.model_attempt.client_signing = signed|unsigned|failed`，附 unsigned_reason /
+   * error_kind；handshake_failed / verify_rejected / bypass_entered 额外落事件，便于按时间轴还原
+   * 签名降级（fail-open）路径。
+   */
+  recordClientSigning(observation: ModelClientSigningObservation): void {
+    switch (observation.kind) {
+      case "signed_sent":
+        this.setAttribute("zcode.model_attempt.client_signing", "signed");
+        return;
+      case "unsigned_sent":
+        this.setAttribute("zcode.model_attempt.client_signing", "unsigned");
+        this.setAttribute(
+          "zcode.model_attempt.client_signing_unsigned_reason",
+          safeString(observation.reason, 64),
+        );
+        return;
+      case "handshake_failed":
+        this.setAttribute("zcode.model_attempt.client_signing", "failed");
+        this.setAttribute(
+          "zcode.model_attempt.client_signing_error_kind",
+          safeString(observation.errorKind, 64),
+        );
+        this.addEvent("client_signing_handshake_failed", {
+          ...(observation.businessCode !== undefined
+            ? { business_code: observation.businessCode }
+            : {}),
+          error_kind: safeString(observation.errorKind, 64),
+          ...(observation.httpStatus !== undefined
+            ? { http_status: integer(observation.httpStatus) }
+            : {}),
+          ...(observation.reason !== undefined
+            ? { reason: safeString(observation.reason, 128) }
+            : {}),
+        });
+        return;
+      case "verify_rejected":
+        this.addEvent("client_signing_verify_rejected", {
+          reason: safeString(observation.reason, 128),
+          signed_attempt: integer(observation.signedAttempt),
+        });
+        return;
+      case "bypass_entered":
+        this.addEvent("client_signing_bypass_entered");
+        return;
+      case "request_failed_closed":
+        this.setAttribute("zcode.model_attempt.client_signing", "failed");
+        this.setAttribute(
+          "zcode.model_attempt.client_signing_error_kind",
+          safeString(observation.errorKind, 64),
+        );
+        return;
+    }
+  }
+
   markFirstProviderEvent(): void {
     if (this.firstProviderEvent) return;
     this.firstProviderEvent = true;
@@ -1617,6 +1674,7 @@ const NOOP_MODEL_ATTEMPT_WRITER: ModelAttemptSpanWriter = {
   markFirstProviderEvent() {},
   markFirstText() {},
   markStreamStalled() {},
+  recordClientSigning() {},
   setCacheReadTokens() {},
   setCacheWriteTokens() {},
   setEffectiveReasoningBudgetTokens() {},

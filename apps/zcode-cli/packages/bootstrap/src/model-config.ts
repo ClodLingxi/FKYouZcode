@@ -28,6 +28,13 @@ export function createRuntimeAiSdkModelExecutionConfig(
   const network = normalizeAiSdkNetworkConfig(options.network);
   return {
     defaultHeaders: buildCliZCodeSourceHeaders(env, options),
+    // Client Request Signing V4（逆向官方 xHa）：gate 端点挂在 ZCode 平台 origin，
+    // 来源头与模型请求同款；服务端未开启灰度时 gate 恒为关 → 整体裸发，等价于未装配。
+    codingPlanSignature: {
+      configUrl: `${resolveRuntimeZCodeEndpointOrigin(env)}/api/v1/agent/configs`,
+      headers: buildCliZCodeSourceHeaders(env, options),
+      clientVersion: resolveClientSigningVersion(env, options),
+    },
     env,
     ...(network ? { network } : {}),
   };
@@ -63,6 +70,14 @@ function buildCliZCodeSourceHeaders(
     "X-ZCode-Agent": "glm",
     ...createRuntimePlatformHeaders(),
   };
+}
+
+/** X-Client-Version 的缺省值：环境版本 → 传入 appVersion → 官方缺省 0.0.0-dev。 */
+function resolveClientSigningVersion(
+  env: EnvRecord,
+  options: Pick<RuntimeExecutionConfigOptions, "appVersion">,
+): string | undefined {
+  return normalizePrintableHeaderValue(env[ZCODE_APP_VERSION_ENV] ?? options.appVersion);
 }
 
 function resolveAppVersionForHeaders(

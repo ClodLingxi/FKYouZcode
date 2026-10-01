@@ -33,7 +33,13 @@ import {
   createSessionEvent,
   type ExecutionShellSelection,
   type MessageId,
+  type ModelStatusSink,
 } from "@zcode/contracts";
+import type { ModelClientSigningObservation } from "@zcode/contracts/telemetry";
+import type {
+  ClientSigningObservation,
+  ClientSigningObservationContext,
+} from "@zcode/adapters/model";
 import { isRemoteWorkspaceIdentity, resolveZCodeRuntimeEnv } from "@zcode/shared";
 import {
   ZCODE_ATTACHMENT_FAULT_CODES,
@@ -525,6 +531,26 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       network: configResult.config.network,
       sourceTitle: options.sourceTitle,
     });
+    // Client Request Signing V4 observation → model_attempt span（按 x-request-id 关联）；
+    // 遥测未启用（statusSink 缺失或为 noop）时不接观察者，签名行为不受影响。
+    const clientSigningStatusSink = modelTelemetry.statusSink as
+      | (ModelStatusSink & {
+          recordClientSigning(input: {
+            observation: ModelClientSigningObservation;
+            requestId: string;
+          }): void;
+        })
+      | undefined;
+    const observeClientSigning =
+      typeof clientSigningStatusSink?.recordClientSigning === "function"
+        ? (observation: ClientSigningObservation, context: ClientSigningObservationContext) => {
+            if (!context.requestId) return;
+            clientSigningStatusSink.recordClientSigning({
+              observation,
+              requestId: context.requestId,
+            });
+          }
+        : undefined;
     const modelAdapter =
       options.modelAdapter ??
       createModelAdapter({
@@ -533,6 +559,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         modelIoDir,
         modelIoFullRetentionEnabled: options.modelIoFullRetentionEnabled,
         executionConfig: modelExecutionConfig,
+        observeClientSigning,
         statusSink: modelTelemetry.statusSink,
         streamIdleTimeoutMs: configResult.config.modelStream.idleTimeoutMs,
       });

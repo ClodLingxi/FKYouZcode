@@ -11,6 +11,7 @@ import type {
   ModelAttemptFailureStage,
   ModelAttemptSpanWriter,
   ModelCallSpanWriter,
+  ModelClientSigningObservation,
   ModelExecutionTelemetryPort,
   ResolvedModelTelemetryDescriptor,
 } from "@zcode/contracts/telemetry";
@@ -39,6 +40,9 @@ interface CallState {
   writer: ModelCallSpanWriter;
 }
 
+/** 签名 observation 等待队列上限（按 requestId 计，FIFO 淘汰；逆向官方 ClientSigningObservationStore）。 */
+const MAX_PENDING_CLIENT_SIGNING_REQUESTS = 64;
+
 /**
  * 把 Transport 的实时事实直接写入仍然活动的 Model Call/Attempt Span。
  * 不创建终态 Record、不保存开始/结束时间，也不在导出阶段重建 Span。
@@ -46,6 +50,7 @@ interface CallState {
 export class ModelApiTelemetryStatusSink implements ModelStatusSink {
   private readonly calls = new Map<string, CallState>();
   private readonly endpointCache = new ProviderEndpointIdentityCache();
+  private readonly pendingClientSigning = new Map<string, ModelClientSigningObservation[]>();
   private readonly maxActiveCallAgeMs: number;
   private readonly maxActiveCalls: number;
   private readonly modelExecution: ModelExecutionTelemetryPort;
@@ -68,6 +73,49 @@ export class ModelApiTelemetryStatusSink implements ModelStatusSink {
 
   publishFailure(event: ModelRequestFailedStatusEvent, error: unknown): void {
     this.publishObserved(event, error);
+  }
+
+  /**
+   * Client Request Signing V4 observation 入口（按 x-request-id 关联）：
+   * attempt span 已在飞则直接写入；先于 attempt 到达则进入 FIFO 等待（上限 64 个
+   * requestId），startAttempt 时补录。签名观测永远旁路，不得影响模型链路。
+   */
+  recordClientSigning(input: {
+    observation: ModelClientSigningObservation;
+    requestId: string;
+  }): void {
+    try {
+      const attempt = this.findAttempt(input.requestId);
+      if (attempt) {
+        attempt.writer.recordClientSigning(input.observation);
+        return;
+      }
+      const queued = this.pendingClientSigning.get(input.requestId) ?? [];
+      queued.push(input.observation);
+      this.pendingClientSigning.set(input.requestId, queued);
+      // Map 迭代按插入序，删除首键即 FIFO 淘汰。
+      while (this.pendingClientSigning.size > MAX_PENDING_CLIENT_SIGNING_REQUESTS) {
+        const oldest = this.pendingClientSigning.keys().next();
+        if (oldest.done) break;
+        this.pendingClientSigning.delete(oldest.value);
+      }
+    } catch (error) {
+      try {
+        this.onWarning?.("Client signing telemetry recording failed", {
+          errorType: error instanceof Error ? error.name : typeof error,
+        });
+      } catch {
+        // 观测健康回调也不能反向污染模型链路。
+      }
+    }
+  }
+
+  private findAttempt(requestId: string): AttemptState | undefined {
+    for (const call of this.calls.values()) {
+      const attempt = call.attempts.get(requestId);
+      if (attempt) return attempt;
+    }
+    return undefined;
   }
 
   private publishObserved(event: ModelNetworkStatusEvent, failureError?: unknown): void {
@@ -173,12 +221,14 @@ export class ModelApiTelemetryStatusSink implements ModelStatusSink {
         if (!attempt) return;
         this.finishFailedAttempt(call, attempt, event, failureError);
         call.attempts.delete(event.requestId);
+        this.pendingClientSigning.delete(event.requestId);
         if (!event.retryable) this.finishFailedCall(call, event, failureError);
         return;
       case "model_request_completed":
         if (!attempt) return;
         this.finishCompletedAttempt(attempt.writer, event);
         call.attempts.delete(event.requestId);
+        this.pendingClientSigning.delete(event.requestId);
         call.writer.finishCompleted();
         this.calls.delete(call.logicalCallId);
     }
@@ -219,6 +269,14 @@ export class ModelApiTelemetryStatusSink implements ModelStatusSink {
     call.attempts.set(event.requestId, { requestId: event.requestId, writer });
     call.lastRequestId = event.requestId;
     call.pendingRetryDelayMs = undefined;
+    // 先到的签名 observation（fetch 层早于 request_started 事件）在此补录。
+    const pendingSigning = this.pendingClientSigning.get(event.requestId);
+    if (pendingSigning) {
+      this.pendingClientSigning.delete(event.requestId);
+      for (const observation of pendingSigning) {
+        writer.recordClientSigning(observation);
+      }
+    }
   }
 
   private finishCompletedAttempt(
