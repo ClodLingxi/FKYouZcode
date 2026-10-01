@@ -2017,7 +2017,8 @@ const zhCN: Record<string, string> = {
   "settings.browser.import.failed": "Chrome 浏览器数据导入失败。",
 
   "settings.webRemote.title": "手机远控（Web Remote Control）",
-  "settings.webRemote.description": "开启后生成配对二维码，手机扫码即可在网页上查看与操控当前会话。",
+  "settings.webRemote.description":
+    "开启后生成配对二维码，手机扫码即可在网页上查看与操控当前会话。",
   "settings.webRemote.start": "开启远控",
   "settings.webRemote.stop": "停止远控",
   "settings.webRemote.reset": "重置配对",
@@ -3403,7 +3404,12 @@ const zhCN: Record<string, string> = {
   "settings.subagents.model.select": "选择模型",
   "settings.subagents.model.main": "主模型",
   "settings.subagents.model.lite": "轻量模型",
+  // 子代理 permissionMode 6 档标签（canonical 子代理集 {acceptEdits,auto,bypassPermissions,default,dontAsk,plan}）
+  "settings.subagents.permissionMode.default": "默认",
+  "settings.subagents.permissionMode.acceptEdits": "接受编辑",
   "settings.subagents.permissionMode.auto": "自动",
+  "settings.subagents.permissionMode.bypassPermissions": "绕过权限",
+  "settings.subagents.permissionMode.dontAsk": "不询问",
   "settings.subagents.permissionMode.plan": "计划模式",
   "settings.subagents.color.blue": "蓝色",
   "settings.subagents.color.cyan": "青色",
@@ -5352,10 +5358,13 @@ const zhCN: Record<string, string> = {
 
   // 模式
   "mode.plan": "计划",
+  // canonical default 档（导入/迁移来源任务元数据的展示回退；glm 新建会话 UI 仍只有下面 4 档）
+  "mode.label.glm.default": "默认模式",
   "mode.label.glm.build": "变更前确认",
   "mode.label.glm.edit": "自动编辑",
   "mode.label.glm.plan": "计划模式",
   "mode.label.glm.yolo": "完全访问",
+  "mode.description.glm.default": "使用默认确认策略。",
   "mode.description.glm.build": "改文件前先问我。",
   "mode.description.glm.edit": "自动编辑文件。",
   "mode.description.glm.plan": "编辑前先出计划。",

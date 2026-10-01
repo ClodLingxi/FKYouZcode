@@ -146,7 +146,28 @@ export interface ZCodeTaskGoalChangedPatch {
 }
 // ---- ZCode task 模式 ----
 
-export type ZCodeTaskMode = "yolo" | "plan" | "edit" | "auto" | "autoEdit" | "build";
+/**
+ * canonical 任务模式（10 值），服务多后端（claude/codex/gemini/opencode/glm）的
+ * 持久化、导入迁移与自动化/off-peak 元数据；与 zcodeTaskModeSchema 同值。
+ * 依据闭源 zcode.cjs zcodeTaskModeSchema（zod enum，10 值，含原生 yolo）：
+ * - yolo 是 glm 原生全自动档；bypassPermissions/dontAsk 是 Claude 风格 canonical id
+ *   （导入/迁移用），对 glm 运行时经 host 适配层坍缩到 yolo，见 services adapter toZCodeMode。
+ * - default/acceptEdits/autoEdit 在 glm 顶层会话坍缩到 build（安全降级）；
+ *   acceptEdits 在子代理层例外映射到 edit。
+ * - auto 两边都是 reserved but not implemented（运行时对一切权限请求 deny）。
+ * 运行时判定层（executionPermissionModeSchema，4 值 + plan 通道）不随本枚举扩容。
+ */
+export type ZCodeTaskMode =
+  | "default"
+  | "yolo"
+  | "plan"
+  | "edit"
+  | "acceptEdits"
+  | "auto"
+  | "dontAsk"
+  | "bypassPermissions"
+  | "autoEdit"
+  | "build";
 
 export type ZCodeOffPeakRunType = "init" | "resume";
 

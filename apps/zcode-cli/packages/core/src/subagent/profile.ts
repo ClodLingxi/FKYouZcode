@@ -13,7 +13,20 @@ export type BuiltInSubagentModelSelectionOverrides = Partial<
   Record<typeof DEFAULT_SUBAGENT_TYPE | typeof EXPLORE_AGENT_TYPE, ModelSelection>
 >;
 
-export type AgentPermissionMode = "auto" | "plan";
+/**
+ * 子代理 frontmatter permissionMode 合法集（6 值，闭源同款）：
+ * {acceptEdits, auto, bypassPermissions, default, dontAsk, plan}。
+ * 运行时映射见 runtime/methods/subagent.ts resolveSubagentPermissionMode——
+ * 注意子代理的 acceptEdits→edit（自动接受编辑），与顶层会话 canonical
+ * acceptEdits→build（glm 无该档，安全降级）不同。
+ */
+export type AgentPermissionMode =
+  | "acceptEdits"
+  | "auto"
+  | "bypassPermissions"
+  | "default"
+  | "dontAsk"
+  | "plan";
 
 export type AgentProfileSource = "built-in" | "project" | "user";
 export type AgentMemoryScope = "user" | "project" | "local";
@@ -59,7 +72,16 @@ const VALID_COLORS = new Set<NonNullable<AgentProfile["color"]>>([
   "cyan",
 ]);
 
-const VALID_PERMISSION_MODES = new Set<AgentPermissionMode>(["auto", "plan"]);
+// 6 值集合依据闭源子代理 frontmatter 校验（dpa 集合）：
+// {"acceptEdits","auto","bypassPermissions","default","dontAsk","plan"}。
+const VALID_PERMISSION_MODES = new Set<AgentPermissionMode>([
+  "acceptEdits",
+  "auto",
+  "bypassPermissions",
+  "default",
+  "dontAsk",
+  "plan",
+]);
 
 const VALID_MEMORY_SCOPES = new Set<AgentMemoryScope>(["user", "project", "local"]);
 

@@ -470,16 +470,30 @@ function createSubagentOverrideModelFactory(
   };
 }
 
-function resolveSubagentPermissionMode(
+/**
+ * 子代理 permissionMode（6 值 canonical）→ 运行时模式（闭源 Txa 同款）：
+ * - bypassPermissions|dontAsk → yolo：Claude 风格全自动在 glm 运行时等价原生 yolo；
+ * - acceptEdits → edit：子代理层“自动接受文件编辑”有原生 edit 档可落
+ *   （与顶层会话 canonical acceptEdits→build 的安全降级不同）；
+ * - auto → auto（保留位）；plan → plan；
+ * - default 与 undefined 同路径：内置 Explore 代理默认 yolo，其余继承父模式。
+ */
+export function resolveSubagentPermissionMode(
   parentMode: AgentRuntimeInternal["config"]["mode"],
   permissionMode: ExploreSubagentRuntimeRequest["permissionMode"],
   builtInExplore: boolean,
 ): AgentRuntimeInternal["config"]["mode"] {
   switch (permissionMode) {
+    case "bypassPermissions":
+    case "dontAsk":
+      return "yolo";
+    case "acceptEdits":
+      return "edit";
     case "auto":
       return "auto";
     case "plan":
       return "plan";
+    case "default":
     case undefined:
       return builtInExplore ? "yolo" : parentMode;
     default:

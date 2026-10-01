@@ -233,6 +233,14 @@ function normalizeCronAutomationMode(
     case "auto":
     case "autoEdit":
       return "build";
+    // canonical 10 值枚举落地后，default/acceptEdits 与 services 侧 toZCodeMode 同语义坍缩为
+    // build；dontAsk/bypassPermissions 坍缩为 yolo（官方闭源三层结构的 host 适配层规则）。
+    case "default":
+    case "acceptEdits":
+      return "build";
+    case "dontAsk":
+    case "bypassPermissions":
+      return "yolo";
     default: {
       const exhaustiveMode: never = mode;
       return exhaustiveMode;

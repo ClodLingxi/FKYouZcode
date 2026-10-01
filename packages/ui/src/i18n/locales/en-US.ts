@@ -2139,12 +2139,15 @@ const enUS: Record<string, string> = {
   "settings.browser.import.failed": "Chrome browser data import failed.",
 
   "settings.webRemote.title": "Web Remote Control",
-  "settings.webRemote.description": "Generate a pairing QR code so your phone can view and control the current session from a web page.",
+  "settings.webRemote.description":
+    "Generate a pairing QR code so your phone can view and control the current session from a web page.",
   "settings.webRemote.start": "Enable",
   "settings.webRemote.stop": "Stop",
   "settings.webRemote.reset": "Reset pairing",
-  "settings.webRemote.resetHint": "Rotate the pairing credential; all previously generated QR codes become invalid",
-  "settings.webRemote.resetConfirm": "Resetting pairing invalidates all generated QR codes; you must scan again. Continue?",
+  "settings.webRemote.resetHint":
+    "Rotate the pairing credential; all previously generated QR codes become invalid",
+  "settings.webRemote.resetConfirm":
+    "Resetting pairing invalidates all generated QR codes; you must scan again. Continue?",
   "settings.webRemote.status": "Status",
   "settings.webRemote.customRelay": "Using a self-hosted relay endpoint.",
   "settings.webRemote.qrAlt": "Pairing QR code",
@@ -3631,7 +3634,12 @@ const enUS: Record<string, string> = {
   "settings.subagents.model.select": "Select model",
   "settings.subagents.model.main": "Main",
   "settings.subagents.model.lite": "Lite",
+  // Subagent permissionMode labels (canonical set {acceptEdits,auto,bypassPermissions,default,dontAsk,plan})
+  "settings.subagents.permissionMode.default": "Default",
+  "settings.subagents.permissionMode.acceptEdits": "Accept edits",
   "settings.subagents.permissionMode.auto": "Auto",
+  "settings.subagents.permissionMode.bypassPermissions": "Bypass permissions",
+  "settings.subagents.permissionMode.dontAsk": "Don't ask",
   "settings.subagents.permissionMode.plan": "Plan",
   "settings.subagents.color.blue": "Blue",
   "settings.subagents.color.cyan": "Cyan",
@@ -5576,10 +5584,13 @@ const enUS: Record<string, string> = {
 
   // Modes
   "mode.plan": "Plan",
+  // canonical default tier (display fallback for imported/migrated task metadata; new-session UI stays 4 tiers below)
+  "mode.label.glm.default": "Default",
   "mode.label.glm.build": "Ask before changes",
   "mode.label.glm.edit": "Edit automatically",
   "mode.label.glm.plan": "Plan mode",
   "mode.label.glm.yolo": "Full access",
+  "mode.description.glm.default": "Use default confirmations.",
   "mode.description.glm.build": "Ask before file changes.",
   "mode.description.glm.edit": "Edit files automatically.",
   "mode.description.glm.plan": "Plan before editing.",

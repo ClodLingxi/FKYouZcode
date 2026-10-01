@@ -13,6 +13,7 @@ import {
   AUTOMATION_CREATE_LIMIT_ERROR_CODE,
   resolveWorkspaceKey,
   modelSelectionSchema,
+  normalizeZCodeAutomationPersistMode,
   zcodeTaskModeSchema,
   type ZCodeAutomation,
   type ZCodeAutomationCreateParams,
@@ -174,6 +175,18 @@ function assertValidAutomationMode(mode: unknown): void {
     // 读取兼容历史脏数据不代表允许继续写脏数据；Repo 是绕过 RPC 时的最终持久化边界。
     throw new Error(`Invalid automation mode: ${String(mode)}`);
   }
+}
+
+/**
+ * 落库前把 canonical 10 值压成 4 值（闭源 uYa 归一化）：
+ * dontAsk|bypassPermissions→yolo；default|auto|acceptEdits|autoEdit→build。
+ * 创建/编辑入口接受完整 canonical 集（provider 档位 id），但 automation 表的
+ * mode 值域必须与 UI 表单/派发链路的 4 档一致，派发侧 toZCodeMode 才不会
+ * 遇到未建模档位。
+ */
+function automationModeForPersist(mode: string | null): string | null {
+  const parsed = zcodeTaskModeSchema.safeParse(mode);
+  return parsed.success ? (normalizeZCodeAutomationPersistMode(parsed.data) ?? null) : null;
 }
 
 function rowToRun(row: AutomationRunRow): ZCodeAutomationRun {
@@ -359,7 +372,8 @@ export class AutomationRepo {
         provider: null,
         // 任务配置的显式空值与尚未迁移的 SQL NULL 分开；run 的 SQL NULL 冻结语义不变。
         model_selection: serializeAutomationModelSelection(params.modelSelection) ?? "null",
-        mode: params.mode ?? null,
+        // canonical 档位 id（如 dontAsk/autoEdit）在落库前压成 4 档，表内值域保持稳定。
+        mode: automationModeForPersist(params.mode ?? null),
         thought_level: null,
         workspace_key: workspaceKey,
         workspace_path: params.workspacePath,
@@ -485,7 +499,9 @@ export class AutomationRepo {
         params.modelSelection === undefined
           ? existing.model_selection
           : (serializeAutomationModelSelection(params.modelSelection ?? undefined) ?? "null"),
-      mode: params.mode === undefined ? existing.mode : params.mode,
+      // params.mode===null 表示显式清空（回落 workspace 默认）；canonical 档位 id 同 create 压成 4 档。
+      mode:
+        params.mode === undefined ? existing.mode : automationModeForPersist(params.mode ?? null),
       thought_level: existing.thought_level,
       recurring: params.recurring === undefined ? existing.recurring : params.recurring ? 1 : 0,
       max_runs: params.maxRuns === undefined ? existing.max_runs : params.maxRuns,

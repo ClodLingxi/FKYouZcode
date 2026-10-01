@@ -14,11 +14,19 @@ import { workspaceHookReviewDecisionSchema } from "./zcode-protocol-v4/workspace
 import { errorAttributionSchema } from "./zcode-protocol-v4/snapshot.js";
 
 const nonEmptyString = z.string().trim().min(1);
+// canonical 任务模式全集（10 值）：task meta 持久化值可能来自导入/迁移/自动化等
+// provider 档位（default/acceptEdits/dontAsk/bypassPermissions），realtime 校验
+// 不能只认 glm 原生 6 值，否则手机 replayable 会拒收新档位的任务元数据。
+// 与 zcode-task-mode-schema.ts 的 zcodeTaskModeSchema 同值。
 const zcodeTaskModeRealtimeValues = [
+  "default",
   "yolo",
   "plan",
   "edit",
+  "acceptEdits",
   "auto",
+  "dontAsk",
+  "bypassPermissions",
   "autoEdit",
   "build",
 ] as const satisfies readonly ZCodeTaskMode[];

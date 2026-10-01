@@ -3225,7 +3225,16 @@ function parseModelPickerValue(value: string): ModelSelection {
   return parseSharedModelSelection(value);
 }
 
-function toZCodeMode(mode: ZCodeTaskMode | undefined): ZCodeSessionMode | undefined {
+/**
+ * canonical 任务模式 → 运行时会话模式（host 适配层，闭源 toZCodeMode 等价）。
+ * 10 值 canonical 在进入运行时前坍缩成 5 值 ZCodeSessionMode：
+ * - bypassPermissions/dontAsk 是 Claude 风格全自动 canonical id，glm 运行时没有独立档位，坍缩到 yolo；
+ * - default/acceptEdits/autoEdit 是 provider 档位 id，glm 顶层会话不提供这些档位，安全降级到 build；
+ * - 未知值返回 undefined，由调用点兜底 ?? "build"（与闭源 host 调用点一致）。
+ * 注意：子代理层的 acceptEdits 例外映射到 edit（见 runtime resolveSubagentPermissionMode），
+ * 与这里顶层的 acceptEdits→build 不同。
+ */
+export function toZCodeMode(mode: ZCodeTaskMode | undefined): ZCodeSessionMode | undefined {
   switch (mode) {
     case "plan":
       return "plan";
@@ -3234,10 +3243,15 @@ function toZCodeMode(mode: ZCodeTaskMode | undefined): ZCodeSessionMode | undefi
       // 调用方的 ?? build 会把权限模式静默降级成“变更前确认”。
       return "edit";
     case "yolo":
+    case "bypassPermissions":
+    case "dontAsk":
+      // Claude 风格全自动（跳过权限检查/不询问）在 glm 运行时等价于原生 yolo。
       return "yolo";
     case "auto":
       return "auto";
     case "build":
+    case "default":
+    case "acceptEdits":
     case "autoEdit":
       return "build";
     default:
