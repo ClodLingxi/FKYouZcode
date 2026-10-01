@@ -35,6 +35,9 @@ export const SYSTEM_REMINDER_PERSISTED_SOURCES = [
   "selection_side_chat",
   "queued_system_notification",
   "shell_environment_change",
+  // 语义召回（semantic-recall 分支）注入的项目记忆：随 turn 持久化到 transcript，
+  // 恢复/重放按 meta provider-visible user 消息保留，不在重生成排除集内。
+  "relevant_memory",
 ] as const;
 
 export const SYSTEM_REMINDER_PER_REQUEST_SOURCES = [
@@ -160,6 +163,9 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
     true,
     "sr.shell_environment_change",
   ),
+  // 语义召回注入：当 turn 生成、provider-visible、UI 不显示正文（闭源 jGs 表中
+  // relevant_memory: current_turn / per_current_turn / meta / sr.relevant_memory）。
+  relevant_memory: descriptor("current_turn", "per_current_turn", true, "sr.relevant_memory"),
   diagnostics: descriptor("mid_turn_event", "mid_turn_event", true, "sr.diagnostics"),
 };
 

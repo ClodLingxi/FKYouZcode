@@ -81,6 +81,12 @@ export interface RegularTurnLoopState {
   offPeakTaskId?: string;
   /** CronCreate 命中全局上限后，本用户 turn 永久切为纯文本回复，禁止模型自行恢复。 */
   automationCreateLimitReached?: boolean;
+  /**
+   * 一次性边界标志：真实工具结果批次已完成、尚未被下一次模型请求消费。
+   * 语义召回注入只发生在这个边界上（对应闭源 completedRealToolResultBatch，
+   * spec §5.9）：模型不调工具直接作答的 turn 不注入召回结果。
+   */
+  completedRealToolResultBatch?: boolean;
   anomalyWarningsInjected: number;
   /** 本轮是否已消费来源为 subagent 的后台结果通知。 */
   backgroundSubagentResultConsumed: boolean;
@@ -180,6 +186,8 @@ export function recordCompactSuccess(
 export function recordCompletedToolBatch(state: RegularTurnLoopState): void {
   // 旧 guard 活在整个用户 turn，完整工具批次结束后仍保持 used，导致后续真实 overflow 无法再次 reactive compact。
   state.reactiveCompactAttemptedInCurrentModelStep = false;
+  // 语义召回的注入边界：真实工具结果批次闭合（闭源在工具提交处置位该标志，spec §5.9）。
+  state.completedRealToolResultBatch = true;
   if (state.compactTracking) {
     state.compactTracking.toolTurnsSinceCompact += 1;
   }

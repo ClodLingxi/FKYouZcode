@@ -54,6 +54,8 @@ import type { AgentRuntimeCoreMethods } from "./internal-methods.js";
 import type { AgentRuntimeTurnMethods } from "./internal-turn-methods.js";
 import type { AgentRuntimeHookMethods } from "./internal-hook-methods.js";
 import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-extraction.js";
+import type { MemoryRecallState } from "../memory/recall/selector.js";
+import type { MemoryRecallPrefetch } from "../memory/recall/prefetch.js";
 import type { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
 
@@ -92,6 +94,9 @@ export interface AgentRuntimeInternal
   latestContextBuildResult?: ContextBuildResult;
   memoryRoot?: string;
   memoryIndexContent?: string;
+  /** 语义召回（semantic-recall 分支）的会话级状态与 turn 级预取句柄；唯一所有者是本 runtime。 */
+  memoryRecallState: MemoryRecallState;
+  memoryRecallPrefetch?: MemoryRecallPrefetch;
   memoryExtractionScheduler?: ProjectMemoryExtractionScheduler;
   contextSourcePort?: ContextSourcePort;
   skillPort?: SkillPort;

@@ -60,6 +60,11 @@ import {
   openGoalStateChangeReminderDeferral,
 } from "./goal-state-reminder.js";
 import { scheduleProjectMemoryExtraction } from "../helpers/project-memory-extraction.js";
+import {
+  PROJECT_MEMORY_RETRIEVAL_BRANCH,
+  disposeProjectMemoryRecallPrefetch,
+  startProjectMemoryRecallPrefetch,
+} from "../../memory/recall/prefetch.js";
 import { appendBrowserTurnScreenshot } from "./browser-turn-screenshot.js";
 import { clearBrowserTurnState } from "../../repl/browser-turn-state.js";
 import { applySubmissionExecutionState, createTurnModel } from "./turn-model.js";
@@ -558,6 +563,13 @@ export async function executeTurnCommand(
         if (!loopModel) {
           throw new Error("Turn model was not created before execution");
         }
+        // 语义召回预取入口（闭源 @13069754 的 XEo）：用户消息持久化后、turn state 构建前
+        // 后台启动；default-index 分支（默认）在函数首行直接返回，不产生任何副作用。
+        startProjectMemoryRecallPrefetch(
+          this,
+          { model: loopModel, traceContext: turnTraceContext, turnAbortSignal },
+          PROJECT_MEMORY_RETRIEVAL_BRANCH,
+        );
         loopState = {
           activeTurn,
           ...(options?.automationId ? { automationId: options.automationId } : {}),
@@ -824,6 +836,8 @@ export async function executeTurnCommand(
     if (targetRunHeartbeat) {
       clearInterval(targetRunHeartbeat);
     }
+    // turn 结束释放语义召回预取（闭源 @13074598 的 Dxn）：中止未完成的 selector 调用并清句柄。
+    disposeProjectMemoryRecallPrefetch(this);
     this.releaseTurnStart(turnId);
     clearBrowserTurnState(this.sessionId, turnId);
     this.finishActiveTurn(activeTurn);

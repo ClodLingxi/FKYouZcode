@@ -39,6 +39,10 @@ import {
   commitTurnRequestEntries,
   filterOutputTokenContinuationEntries,
 } from "./turn-output-token-continuation.js";
+import {
+  PROJECT_MEMORY_RETRIEVAL_BRANCH,
+  consumeSettledProjectMemoryRecall,
+} from "../../memory/recall/prefetch.js";
 
 export async function runRegularTurnLoop(
   this: AgentRuntimeInternal,
@@ -47,6 +51,18 @@ export async function runRegularTurnLoop(
   while (true) {
     throwIfTurnAborted(state.turnAbortSignal);
     const outputTokenRecoveryActive = state.turnRequestState.outputTokenContinuationCount > 0;
+    // 真实工具结果批次后的首个模型请求边界：消费已 settle 的语义召回预取（闭源 §5.9）。
+    // 输出续写（outputTokenRecoveryActive）不消费——注入 entry 属于上一个请求的增量轨迹。
+    // default-index 分支（默认）在 consume 内直接返回，不产生任何副作用。
+    if (state.completedRealToolResultBatch && !outputTokenRecoveryActive) {
+      state.completedRealToolResultBatch = false;
+      const recalledEntry = await consumeSettledProjectMemoryRecall(
+        this,
+        state.turnTraceContext,
+        PROJECT_MEMORY_RETRIEVAL_BRANCH,
+      );
+      appendTurnRequestEntries(state.turnRequestState, recalledEntry ? [recalledEntry] : []);
+    }
     // guide 只允许由完整 tool result batch 设置这个一次性诊断；普通 queue 不在
     // model roundtrip 起点消费，避免把未来 turn 错并入当前 product turn。
     const drainedSteerForNextRequest = state.drainedSteerForNextRequest;

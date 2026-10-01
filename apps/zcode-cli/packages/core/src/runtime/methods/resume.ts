@@ -40,6 +40,7 @@ import {
   restoreWorkspaceFileRewindEntries,
 } from "./workspace-checkpoint-persistence.js";
 import { mainTurnCacheHitAggregateFromMessages } from "./turn-model-step-usage.js";
+import { resetProjectMemoryRecall } from "../../memory/recall/prefetch.js";
 
 export function toScheduleState(
   this: AgentRuntimeInternal,
@@ -132,6 +133,8 @@ export async function resumeFromStore(
   this.contextBuilder = null;
   this.contextInitialized = false;
   this.lastEmittedLocalDate = undefined;
+  // cold resume 重建会话状态：语义召回登记随旧进程丢弃，预取句柄一并释放（闭源 @12980833）。
+  resetProjectMemoryRecall(this);
   // cold resume 的历史 hydration 会先清空 runtime-local read-state；必须在
   // Context 初始化前完成，确保随后单次加载的 MEMORY.md 状态与 provider 所见内容一致。
   const readFileStateHydration = await hydrateReadFileStateFromSession({

@@ -110,6 +110,12 @@ export interface ContextBuilderConfig {
   projectContext?: ProjectContext;
   memoryRoot?: string;
   memoryIndexContent?: string;
+  /**
+   * Project Memory 检索分支（默认 default-index）。
+   * semantic-recall：MEMORY.md 索引不进 system prompt，改由 selector 按需召回注入；
+   * Memory 段落同步去掉「写索引」指引。来源见 memory/recall/prefetch.ts 的分支常量。
+   */
+  memoryRetrievalBranch?: "default-index" | "semantic-recall";
   skills?: SkillLoadOutcome;
   agentProfiles?: readonly AgentProfile[];
   embeddedSearchEnabled?: boolean;

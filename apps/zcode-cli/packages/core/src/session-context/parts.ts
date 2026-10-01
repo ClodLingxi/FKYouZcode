@@ -17,6 +17,8 @@ const SKIPPED_SYNTHETIC_TEXT_SOURCES = new Set([
   "queued_system_notification",
   "runtime_mode",
   "todo_reminder",
+  // 语义召回注入的项目记忆正文不进会话上下文投影（闭源 renderer 跳过集合含 relevant_memory）。
+  "relevant_memory",
 ]);
 
 export function formatPartForContext(part: MessagePart): string | null {

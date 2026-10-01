@@ -16,13 +16,58 @@ function applyAnthropicRequestBodyCompatibility(
 
   const body = safeParseRecord(init.body);
   if (!body) return init;
-  const restoredSystemBody = restoreMidConversationSystemStringContent(body);
+  // 顺序与官方一致（闭源 xPs 管线 [TPs, IPs]）：先拆回被合并的 selector 双 user 消息，
+  // 再把 mid-conversation system 的单 text 块还原为纯字符串 content。
+  const restoredSelectorBody = restoreMemorySelectorMessageBoundaries(body);
+  const restoredSystemBody = restoreMidConversationSystemStringContent(restoredSelectorBody);
   if (restoredSystemBody === body) return init;
 
   return {
     ...init,
     body: JSON.stringify(restoredSystemBody),
   };
+}
+
+/**
+ * 部分 Anthropic-compatible 网关会把「连续两条同角色 user 消息」合并为一条消息的两个
+ * text 块。memory selector 请求恰好以两条 user 消息开头（Available memories 清单 +
+ * Select memories relevant to query）；合并会破坏 selector 的多轮对话结构，模型会把
+ * 清单误当作 query 的一部分。检测到 selector 请求特征（output_config 为 json_schema
+ * 且 schema.required 含 selected_memories，首条 user 消息恰有两个 text 块且前缀匹配）
+ * 时发送前拆回两条独立 user 消息，恢复消息边界（官方闭源 TPs）。
+ */
+function restoreMemorySelectorMessageBoundaries(
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  const messages = Array.isArray(body.messages) ? body.messages : undefined;
+  const first = safeRecord(messages?.[0]);
+  const content = Array.isArray(first?.content) ? first.content : undefined;
+  return !isMemorySelectorOutput(body.output_config) ||
+    first?.role !== "user" ||
+    content?.length !== 2 ||
+    !hasTextPrefix(content[0], "Available memories:\n") ||
+    !hasTextPrefix(content[1], "Select memories relevant to:\n")
+    ? body
+    : {
+        ...body,
+        messages: [
+          { ...first, content: [content[0]] },
+          { role: "user", content: [content[1]] },
+          ...messages!.slice(1),
+        ],
+      };
+}
+
+function isMemorySelectorOutput(outputConfig: unknown): boolean {
+  const format = safeRecord(safeRecord(outputConfig)?.format);
+  const schema = safeRecord(format?.schema);
+  const required = Array.isArray(schema?.required) ? schema.required : [];
+  return format?.type === "json_schema" && required.includes("selected_memories");
+}
+
+function hasTextPrefix(block: unknown, prefix: string): boolean {
+  const text = safeRecord(block)?.text;
+  return typeof text === "string" && text.startsWith(prefix);
 }
 
 function restoreMidConversationSystemStringContent(

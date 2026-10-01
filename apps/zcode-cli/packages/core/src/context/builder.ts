@@ -150,7 +150,10 @@ export class ContextBuilder {
 
       // Memory
       if (this.config.memoryRoot) {
-        const memorySection = buildMemorySection(this.config.memoryRoot);
+        const memorySection = buildMemorySection(
+          this.config.memoryRoot,
+          this.config.memoryRetrievalBranch,
+        );
         if (memorySection) {
           sections.push(memorySection);
         }

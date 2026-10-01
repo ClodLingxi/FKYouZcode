@@ -71,6 +71,10 @@ function syntheticUserNoticeKind(source: SyntheticUserMessageSource): MessageSem
       return "system_reminder";
     case "plugin_reference":
       return "system_reminder";
+    // 语义召回注入的项目记忆（semantic-recall 分支），与 plugin_reference 同属
+    // provider-visible 的当轮 system reminder 语义。
+    case "relevant_memory":
+      return "system_reminder";
     case "rewind":
       return "rewind_notice";
     case "selection_side_chat":

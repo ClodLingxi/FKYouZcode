@@ -18,6 +18,7 @@ import {
 } from "../deps.js";
 import type { SessionEvent, TraceContext } from "../deps.js";
 import { resolveModelRequestSessionTypeFromTaskType } from "./model-request-session-type.js";
+import { resetProjectMemoryRecall } from "../../memory/recall/prefetch.js";
 import {
   defaultCompactPhaseForTrigger,
   defaultCompactReasonForTrigger,
@@ -623,6 +624,9 @@ async function compactActiveConversationImpl(
           : recordablePostCompactEntries,
       );
       this.readFileState.clear();
+      // compact 完成伴随 read-state 全量重建；召回登记（manifest 缓存/selector 对话链/
+      // 已注入预算）对应的是被替换的旧前缀，必须整体重置（闭源 @12994253 的 hyt）。
+      resetProjectMemoryRecall(this);
       return {
         displayText: "Compacted",
         entries: postCompactEntries,

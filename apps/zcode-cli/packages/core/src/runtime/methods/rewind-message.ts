@@ -33,6 +33,7 @@ import {
   selectCheckpointsForMessages,
   throwIfTurnAborted,
 } from "../helpers/index.js";
+import { resetProjectMemoryRecall } from "../../memory/recall/prefetch.js";
 import type {
   ConversationRewindResult,
   WorkspaceRewindRestoredFile,
@@ -724,6 +725,8 @@ async function rebuildConversationDerivedState(
       ? latestAssistant.info.time.completed
       : undefined;
   this.messageHistory.setCacheMiss();
+  // rewind 重建分支历史：召回登记指向被回退的分支，随分支重建整体重置（闭源 hyt 的 rewind 触发点）。
+  resetProjectMemoryRecall(this);
   this.mainTurnCacheHitAggregate = mainTurnCacheHitAggregateFromMessages({
     activeMessages,
     persistedMessages: options.persistedMessages,

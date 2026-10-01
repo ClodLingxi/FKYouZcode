@@ -9,6 +9,8 @@ export const AgentTelemetryOperation = {
   GoalCompletionVerification: "goal_completion_verification",
   GoalTitleGeneration: "goal_title_generation",
   ProjectMemoryExtract: "project_memory_extract",
+  // 语义召回 selector 的后台 detached 预取操作（官方闭源 telemetry 用同名 operation）。
+  ProjectMemoryRecall: "project_memory_recall",
   ReadSessionContextExtract: "read_session_context_extract",
   ReadSessionContextSynthesize: "read_session_context_synthesize",
   SessionTitleGeneration: "session_title_generation",

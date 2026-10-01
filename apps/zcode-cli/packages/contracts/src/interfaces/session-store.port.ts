@@ -54,6 +54,7 @@ export const SYNTHETIC_USER_MESSAGE_SOURCES = [
   "goal_state_change",
   "goal-continuation",
   "plugin_reference",
+  "relevant_memory",
   "rewind",
   "selection_side_chat",
   "subagent",

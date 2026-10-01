@@ -19,6 +19,7 @@ export const zcodeSyntheticUserMessageSourceSchema = z.enum([
   "goal_state_change",
   "goal-continuation",
   "plugin_reference",
+  "relevant_memory",
   "rewind",
   "selection_side_chat",
   "subagent",

@@ -122,6 +122,8 @@ import type { AgentRuntimeInternal } from "./internal.js";
 import { InMemoryRuntimeTaskRegistry, type RuntimeTaskRegistry } from "../runtime-task/registry.js";
 import type { ChildClientPortsContext, ClientFacingPorts } from "./helpers/child-client-ports.js";
 import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-extraction.js";
+import { createMemoryRecallState, type MemoryRecallState } from "../memory/recall/selector.js";
+import type { MemoryRecallPrefetch } from "../memory/recall/prefetch.js";
 import { projectPersistentAgentMemoryTools } from "../subagent/persistent-memory.js";
 import { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
@@ -164,6 +166,9 @@ export class AgentRuntime {
   private latestContextBuildResult?: ContextBuildResult;
   private memoryRoot?: string;
   private memoryIndexContent?: string;
+  // 语义召回状态（semantic-recall 分支）：会话级登记 + turn 级预取句柄。
+  private memoryRecallState: MemoryRecallState = createMemoryRecallState();
+  private memoryRecallPrefetch?: MemoryRecallPrefetch;
   private memoryExtractionScheduler?: ProjectMemoryExtractionScheduler;
   private contextSourcePort?: ContextSourcePort;
   private skillPort?: SkillPort;

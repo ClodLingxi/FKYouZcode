@@ -22,6 +22,7 @@ import {
   normalizeReadFileStateMtimeMs,
 } from "../../tool/read-file-state.js";
 import { resolveEnabledProjectMemoryRoot } from "../helpers/project-memory.js";
+import { PROJECT_MEMORY_RETRIEVAL_BRANCH } from "../../memory/recall/prefetch.js";
 import { buildContextHistoryEntries } from "./context-history-entries.js";
 import { resolveRuntimeEmbeddedSearchEnabled } from "./embedded-search-branch.js";
 import { getContextSourceShellDisplayName } from "./session-shell-environment.js";
@@ -64,7 +65,12 @@ export async function ensureContextInitialized(
   this.startMcpStartup(traceContext);
   this.skillLoadOutcome = await this.discoverSkillsForContext(traceContext);
   this.memoryRoot = await this.loadProjectMemoryRoot(traceContext);
-  this.memoryIndexContent = await loadProjectMemoryIndexContent(this, this.memoryRoot);
+  // 依据官方闭源行为（spec §1）：default-index 分支预载 MEMORY.md 索引进 system prompt
+  // 并写 readFileState；semantic-recall 分支不预载索引，改由 selector 按需召回注入。
+  this.memoryIndexContent =
+    PROJECT_MEMORY_RETRIEVAL_BRANCH === "semantic-recall"
+      ? undefined
+      : await loadProjectMemoryIndexContent(this, this.memoryRoot);
   this.contextBuilder = this.createContextBuilderFromSnapshot(snapshot, this.memoryRoot, {
     memoryIndexContent: this.memoryIndexContent,
     model,
@@ -128,6 +134,7 @@ export function createContextBuilderFromSnapshot(
     userInstructions: snapshot.userInstructions,
     projectContext: snapshot.projectContext,
     memoryIndexContent: options.memoryIndexContent,
+    memoryRetrievalBranch: PROJECT_MEMORY_RETRIEVAL_BRANCH,
     memoryRoot,
     skills: this.skillLoadOutcome,
     agentProfiles: this.config.subagents?.profiles,
