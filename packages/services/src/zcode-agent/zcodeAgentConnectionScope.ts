@@ -30,8 +30,9 @@ export interface ZCodeAgentV4ConnectionContext {
   clientMode: ZCodeAgentV4ClientMode;
   role?: "terminal-client" | "trusted-host-relay";
   /**
-   * 终端客户端在 clientHello 声明 workflowRunDeltas 后由握手写入；
-   * conversation 订阅据此透传给 CLI（workflowRuns 走按 run 增量编码）。
+   * 这条连接的 clientHello 声明了认得 `workflowRun.*` 键级增量。与 `clientMode` 同族：
+   * 由本 facade 从握手事实写出，订阅入参里的同名字段一律被清掉——一个客户端认不认得增量
+   * 是**连接**的事实，不是某一次订阅可以自选的口味。缺席 = 按旧消费者处理。
    */
   workflowRunDeltas?: boolean;
 }
@@ -82,6 +83,8 @@ export function readTrustedZCodeAgentV4Connection(
   return {
     connectionId: context.connectionId,
     clientMode: context.clientMode,
+    // 只认 true：缺席与 false 都是「旧消费者」，键在场与否是下游读端的判据。
+    ...(context.workflowRunDeltas === true ? { workflowRunDeltas: true } : {}),
   };
 }
 
@@ -98,9 +101,9 @@ function withTrustedConnection<T extends object>(
   delete forwarded["connectionId"];
   delete forwarded["clientMode"];
   delete forwarded["deliveryProfile"];
-  // 同 connectionId/clientMode：workflowRunDeltas 只能来自 hello 握手事实，不可由调用方伪造。
-  delete forwarded["workflowRunDeltas"];
   delete forwarded["subscriberScope"];
+  // 与 clientMode 同族的可信位：UI 面的 subscribe 不能自己挑增量编码。
+  delete forwarded["workflowRunDeltas"];
   forwarded[TRUSTED_CONNECTION_FIELD] = context;
   return forwarded as T;
 }
@@ -215,6 +218,8 @@ function createHello(context: ZCodeAgentV4ConnectionContext): HelloMessage {
       compression: "none",
       workspaceHookReview: true,
       independentPlanState: true,
+      // 本 Host 会转发 `workflowRun.*` 键级增量；客户端见到它才能在 clientHello 里回声明
+      // （那个 capabilities 是 .strict() 的，反过来会让老 Host 握不上手）。
       workflowRunDeltas: true,
     },
     auth: {},
@@ -246,8 +251,8 @@ export function createZCodeAgentConnectionScope(
   let handshakeComplete = role === "trusted-host-relay";
   let helloIssued = role === "trusted-host-relay";
   let boundClientId: string | null = null;
-  // 终端 clientHello 声明 workflowRunDeltas 后置位；conversation 订阅据此透传。
-  let boundClientSupportsWorkflowRunDeltas = false;
+  /** clientHello 里的增量声明；trusted relay 没有自己的 clientHello，只搬运下游的。 */
+  let clientWorkflowRunDeltas = false;
   let commandQueryWorkspaceKey: string | null = null;
   let currentTransportFlowState: V4ConnectionFlowState = "drained";
   let flowClosed = false;
@@ -263,18 +268,14 @@ export function createZCodeAgentConnectionScope(
       return {
         connectionId: namespaceRelayConnectionId(context.connectionId, downstream.connectionId),
         clientMode: downstream.clientMode,
-        workflowRunDeltas:
-          downstream.workflowRunDeltas === true || boundClientSupportsWorkflowRunDeltas
-            ? true
-            : undefined,
+        // 增量位属于**下游那一端**：relay 自己不消费帧，只把下游 clientHello 的声明带上去。
+        ...(downstream.workflowRunDeltas === true ? { workflowRunDeltas: true } : {}),
       };
     }
     return {
       connectionId: context.connectionId,
       clientMode: context.clientMode,
-      ...(boundClientSupportsWorkflowRunDeltas || context.workflowRunDeltas === true
-        ? { workflowRunDeltas: true }
-        : {}),
+      ...(clientWorkflowRunDeltas ? { workflowRunDeltas: true } : {}),
     };
   };
 
@@ -677,7 +678,7 @@ export function createZCodeAgentConnectionScope(
         throw new Error("fault.connection.clientChanged");
       }
       boundClientId = parsed.clientId;
-      boundClientSupportsWorkflowRunDeltas = clientSupportsWorkflowRunDeltas(parsed);
+      clientWorkflowRunDeltas = clientSupportsWorkflowRunDeltas(parsed);
       handshakeComplete = true;
     },
     async setConnectionFlowStateV4(params) {
@@ -1040,6 +1041,7 @@ export function createZCodeAgentConnectionScope(
       handshakeComplete = false;
       helloIssued = false;
       boundClientId = null;
+      clientWorkflowRunDeltas = false;
       const entries = Array.from(owned.values());
       owned.clear();
       routeKeyByOwnership.clear();

@@ -30,14 +30,16 @@ import type {
 import {
   DELIVERY_PROFILES,
   PROTOCOL_V4_LIMITS,
+  clampWorkflowRunsForLegacy,
   coalesceConversationDeltas,
-  encodeConversationDeltasForLegacy,
   filterConversationDeltasForProfile,
   filterConversationRowsForProfile,
-  isWorkflowRunDeltaOp,
-  trimWorkflowRunsForLegacyWire,
   utf8JsonByteLength,
 } from "@zcode/shared/zcode-protocol-v4";
+import {
+  encodeConversationDeltasForLegacy,
+  workflowRunDeltaGrowthUpperBound,
+} from "./conversation-workflow-run-deltas.js";
 import {
   ProductProjection,
   type StableForkCandidateResolution,
@@ -92,11 +94,11 @@ interface Subscription {
   connectionId: string;
   profile: DeliveryProfile;
   /**
-   * 声明 workflowRunDeltas 的订阅按 run 增量接收 workflowRuns；
-   * 旧订阅在 delta 编码与 snapshot 边界降级为 state.updated 整键替换。
+   * 这条订阅认不认得 `workflowRun.*` 键级增量（握手能力位，由可信 host 注入）。
+   * false = 旧消费者：增量折成整键 patch、快照裁到旧界（conversation-workflow-run-deltas.ts）。
    */
   workflowRunDeltas: boolean;
-  /** flush buffer：push 时已过 profile 过滤，flush 时 coalesce 打帧。 */
+  /** flush buffer：push 时已过 profile 过滤与该订阅的编码，flush 时 coalesce 打帧。 */
   buffer: ConversationDelta[];
   bufferBytes: number;
   /** buffer 超限后只保留恢复意图，不继续为慢订阅者积压 delta。 */
@@ -113,7 +115,10 @@ interface ConversationSubscribeParams {
   base?: { logEpoch: string; seq: number };
   /** 缺省 replayable（ws 默认；MessagePort 宿主显式传 continuous）。 */
   deliveryProfile?: DeliveryProfileName;
-  /** 缺省 false：workflowRuns 走旧 state.updated 编码。 */
+  /**
+   * 该连接的 clientHello 声明过认得 `workflowRun.*` 增量。与 deliveryProfile 同族：可信 host
+   * 注入，面向 UI 的 subscribe 选不了。缺省 false——能力位缺席一律按旧消费者办。
+   */
   workflowRunDeltas?: boolean;
 }
 
@@ -309,20 +314,10 @@ export class ConversationTopicPublisher {
   private getWireSnapshotForProfile(
     profile: DeliveryProfile,
     snapshot = this.projection.getSnapshot(),
-    options: { workflowRunDeltas?: boolean } = {},
   ): ConversationSnapshot {
     const visibleRows = filterConversationRowsForProfile(snapshot.rows.window, profile);
-    // 旧订阅的 wire snapshot 裁剪 workflowRuns（活动条目优先、置 truncated）；
-    // 增量订阅必须拿全量：per-run 增量的 removed 语义不允许静默裁剪。
-    const runsForWire =
-      options.workflowRunDeltas || snapshot.workflowRuns === undefined
-        ? snapshot.workflowRuns
-        : trimWorkflowRunsForLegacyWire(snapshot.workflowRuns);
     const visibleSnapshot: ConversationSnapshot = {
       ...snapshot,
-      ...(runsForWire === snapshot.workflowRuns
-        ? {}
-        : { workflowRuns: runsForWire }),
       rows: {
         ...snapshot.rows,
         window: visibleRows,
@@ -336,6 +331,34 @@ export class ConversationTopicPublisher {
       ...visibleSnapshot,
       rows: { ...visibleSnapshot.rows, window: visibleRows.slice(-limit) },
     };
+  }
+
+  /**
+   * 一个订阅者的快照帧：profile 决定行可见性，能力位决定 `workflowRuns` 发全量还是旧界。
+   *
+   * 快照与增量必须同一档：一个收着旧界整键 patch 的客户端，如果快照里突然来了 512 个节点，
+   * 它的 `.max(256)` 会让**整帧**解析失败（已知键上的解析错误不会只剥掉一个键）。
+   */
+  private getWireSnapshotForSubscription(subscription: Subscription): ConversationSnapshot {
+    const snapshot = this.getWireSnapshotForProfile(subscription.profile);
+    if (subscription.workflowRunDeltas || snapshot.workflowRuns === undefined) return snapshot;
+    const workflowRuns = clampWorkflowRunsForLegacy(snapshot.workflowRuns);
+    return workflowRuns === snapshot.workflowRuns ? snapshot : { ...snapshot, workflowRuns };
+  }
+
+  /**
+   * 一批 delta 的**每订阅者**编码：profile 过滤 + 旧消费者的整键折叠。
+   *
+   * 折叠取的是**当前**投影状态，所以恢复回放上历史增量会折成终态——中间态被跳过，终态一致，
+   * 与 coalesce 的既有行为同规（conversation-workflow-run-deltas.ts 的文件头）。
+   */
+  private encodeDeltasForSubscription(
+    deltas: readonly ConversationDelta[],
+    subscription: Subscription,
+  ): readonly ConversationDelta[] {
+    const filtered = filterConversationDeltasForProfile(deltas, subscription.profile);
+    if (subscription.workflowRunDeltas) return filtered;
+    return encodeConversationDeltasForLegacy(filtered, this.projection.getSnapshot().workflowRuns);
   }
 
   /**
@@ -532,12 +555,23 @@ export class ConversationTopicPublisher {
       this.wireSnapshotBytesUpperBound += streamingUpperBound;
     } else {
       let candidateBytes = 0;
-      deltas = this.projection.applyEventAtomically(event, (snapshot) => {
+      let nextUpperBound = 0;
+      deltas = this.projection.applyEventAtomically(event, (snapshot, produced) => {
+        // dwf 快路径：这条事件只产键级增量时，它们的字节数就是快照增长的上界（一条 upsert
+        // 最多把自己那点内容加进去，removed 只会让快照变小），不必把整份快照再序列化一遍
+        // ——那一次 JSON.stringify 是每条引擎事件都要付的 MB 级开销，也是这次改造的另一半。
+        // 判据用的是**实际产出**而不是预演，所以 diff 退化出的整键 patch 自然落回精确路径。
+        const growth = workflowRunDeltaGrowthUpperBound(produced);
+        if (growth !== null && this.wireSnapshotBytesUpperBound + growth <= projectionLimit) {
+          nextUpperBound = this.wireSnapshotBytesUpperBound + growth;
+          return true;
+        }
         candidateBytes = this.measureWireSnapshotBytes(this.getWireSnapshot(snapshot));
+        nextUpperBound = candidateBytes;
         return candidateBytes <= projectionLimit;
       });
       if (deltas === null) throw new ProjectionPayloadTooLargeError(candidateBytes);
-      this.wireSnapshotBytesUpperBound = candidateBytes;
+      this.wireSnapshotBytesUpperBound = nextUpperBound;
     }
     this.log.push({ seq: event.sequenceNumber, deltas });
     while (this.log.length > this.retention) {
@@ -545,13 +579,9 @@ export class ConversationTopicPublisher {
       if (evicted) this.floorSeq = evicted.seq;
     }
     if (deltas.length === 0) return;
-    const currentWorkflowRuns = this.projection.getSnapshot().workflowRuns;
     for (const subscription of this.subscriptions.values()) {
       if (subscription.resyncRequired) continue;
-      let filtered = filterConversationDeltasForProfile(deltas, subscription.profile);
-      if (!subscription.workflowRunDeltas) {
-        filtered = encodeConversationDeltasForLegacy(filtered, currentWorkflowRuns);
-      }
+      const filtered = this.encodeDeltasForSubscription(deltas, subscription);
       const next = appendConversationSubscriberBuffer(subscription.buffer, filtered, {
         maxOps: this.subscriberBufferMaxOps,
         maxBytes: this.subscriberBufferMaxBytes,
@@ -660,7 +690,9 @@ export class ConversationTopicPublisher {
         const wireDeltas = deltas.filter((delta) => {
           if (delta.op === "state.updated" || delta.op === "row.appended") return true;
           if (delta.op === "row.removed") return false;
-          if (isWorkflowRunDeltaOp(delta)) return true;
+          // 键级增量作用在状态键上，不在 60 行 wire tail 里——没有「已滑出窗口所以不计」这一说，
+          // 与 state.updated 同规一律计入。
+          if (delta.op === "workflowRun.updated" || delta.op === "workflowRun.removed") return true;
           wireRowIds ??= new Set(
             snapshot.rows.window
               .slice(-PROTOCOL_V4_LIMITS.snapshotTailWindowRows)
@@ -733,12 +765,11 @@ export class ConversationTopicPublisher {
     if (previousId !== undefined) this.subscriptions.delete(previousId);
 
     const profile = DELIVERY_PROFILES[params.deliveryProfile ?? "replayable"];
-    const workflowRunDeltas = params.workflowRunDeltas === true;
     const subscription: Subscription = {
       subscriptionId: `sub-${this.logEpoch}-${this.nextSubscriptionSerial++}`,
       connectionId: params.connectionId,
       profile,
-      workflowRunDeltas,
+      workflowRunDeltas: params.workflowRunDeltas === true,
       buffer: [],
       bufferBytes: 0,
       resyncRequired: false,
@@ -783,7 +814,7 @@ export class ConversationTopicPublisher {
           toSeq: this.currentSeq,
           payload: {
             kind: "snapshot",
-            snapshot: this.getWireSnapshotForProfile(profile, undefined, { workflowRunDeltas }),
+            snapshot: this.getWireSnapshotForSubscription(subscription),
           },
         },
         false,
@@ -792,15 +823,12 @@ export class ConversationTopicPublisher {
       return this.subscribeResult(this.ackFor(subscription, "snapshot"), reservation, rollback);
     }
 
-    // resume：保留窗内 (base.seq, current] 重放，与在线续流同一条 filter→coalesce 管线。
-    const replayDeltas = filterConversationDeltasForProfile(
-      this.log.flatMap((entry) => (entry.seq > base.seq ? entry.deltas : [])),
-      profile,
-    );
+    // resume：保留窗内 (base.seq, current] 重放，与在线续流同一条 filter→编码→coalesce 管线。
     const replay = coalesceConversationDeltas(
-      workflowRunDeltas
-        ? replayDeltas
-        : encodeConversationDeltasForLegacy(replayDeltas, this.projection.getSnapshot().workflowRuns),
+      this.encodeDeltasForSubscription(
+        this.log.flatMap((entry) => (entry.seq > base.seq ? entry.deltas : [])),
+        subscription,
+      ),
     );
     if (base.seq === this.currentSeq) {
       subscription.sentSeq = base.seq;
@@ -869,7 +897,7 @@ export class ConversationTopicPublisher {
           toSeq: this.currentSeq,
           payload: {
             kind: "snapshot",
-            snapshot: this.getWireSnapshotForProfile(subscription.profile),
+            snapshot: this.getWireSnapshotForSubscription(subscription),
           },
         },
         true,
@@ -943,7 +971,7 @@ export class ConversationTopicPublisher {
           toSeq: this.currentSeq,
           payload: {
             kind: "snapshot",
-            snapshot: this.getWireSnapshotForProfile(subscription.profile),
+            snapshot: this.getWireSnapshotForSubscription(subscription),
           },
         },
         false,
@@ -958,9 +986,9 @@ export class ConversationTopicPublisher {
 
     subscription.sentSeq = base.seq;
     const replay = coalesceConversationDeltas(
-      filterConversationDeltasForProfile(
+      this.encodeDeltasForSubscription(
         this.log.flatMap((entry) => (entry.seq > base.seq ? entry.deltas : [])),
-        subscription.profile,
+        subscription,
       ),
     );
     const reservation = this.reserveFrame(
