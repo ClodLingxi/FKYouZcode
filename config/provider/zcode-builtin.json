@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": 30,
+  "revision": 31,
   "config": {
     "providerConfigRules": {
       "templateRules": [
@@ -18,6 +18,28 @@
             "api": {
               "type": "anthropic-messages",
               "baseUrl": "https://api.z.ai/api/anthropic"
+            },
+            "builtinModelIds": ["GLM-5.3", "GLM-5.3-Flash"],
+            "logo": {
+              "type": "builtin",
+              "key": "zai"
+            }
+          }
+        },
+        {
+          "templateId": "zai-coding-api",
+          "templateNameMap": {
+            "zh-CN": "Z.ai Coding Plan（OpenAI 兼容）",
+            "en-US": "Z.ai Coding Plan (OpenAI Compatible)"
+          },
+          "config": {
+            "access": {
+              "type": "zhipu-coding-plan-api-key",
+              "apiKeyManagementUrl": "https://z.ai/manage-apikey/apikey-list"
+            },
+            "api": {
+              "type": "openai-chat-completions",
+              "baseUrl": "https://api.z.ai/api/coding/paas/v4"
             },
             "builtinModelIds": ["GLM-5.3", "GLM-5.3-Flash"],
             "logo": {
@@ -87,6 +109,28 @@
             "api": {
               "type": "anthropic-messages",
               "baseUrl": "https://open.bigmodel.cn/api/anthropic"
+            },
+            "builtinModelIds": ["GLM-5.3", "GLM-5.3-Flash"],
+            "logo": {
+              "type": "builtin",
+              "key": "bigmodel"
+            }
+          }
+        },
+        {
+          "templateId": "bigmodel-coding-api",
+          "templateNameMap": {
+            "zh-CN": "BigModel Coding Plan（OpenAI 兼容）",
+            "en-US": "BigModel Coding Plan (OpenAI Compatible)"
+          },
+          "config": {
+            "access": {
+              "type": "zhipu-coding-plan-api-key",
+              "apiKeyManagementUrl": "https://bigmodel.cn/coding-plan/personal/overview"
+            },
+            "api": {
+              "type": "openai-chat-completions",
+              "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4"
             },
             "builtinModelIds": ["GLM-5.3", "GLM-5.3-Flash"],
             "logo": {
